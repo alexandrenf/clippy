@@ -46,12 +46,11 @@ pub fn hide(app: &AppHandle) {
 pub fn toggle(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let visible = win.is_visible().unwrap_or(false);
-        let focused = win.is_focused().unwrap_or(false);
-        if visible && focused {
+        // Clicking the tray removes focus from the panel before this callback
+        // runs. Visibility, rather than focus, is therefore the reliable
+        // source of truth for an explicit Show / Hide action.
+        if visible {
             let _ = win.hide();
-        } else if visible {
-            let _ = win.set_focus();
-            let _ = app.emit("panel-shown", ());
         } else {
             show(app);
         }

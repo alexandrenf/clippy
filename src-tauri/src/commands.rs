@@ -338,8 +338,15 @@ pub fn open_editor(app: AppHandle, db: State<db::Db>, id: i64) -> CmdResult<()> 
 pub fn open_accessibility_settings() -> CmdResult<()> {
     #[cfg(target_os = "macos")]
     {
+        let pane = if crate::macos::accessibility_trusted() {
+            "Privacy_ListenEvent"
+        } else {
+            "Privacy_Accessibility"
+        };
         std::process::Command::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .arg(format!(
+                "x-apple.systempreferences:com.apple.preference.security?{pane}"
+            ))
             .spawn()
             .map_err(err)?;
         return Ok(());
@@ -353,7 +360,7 @@ pub fn open_accessibility_settings() -> CmdResult<()> {
 pub fn accessibility_status() -> bool {
     #[cfg(target_os = "macos")]
     {
-        return crate::macos::accessibility_trusted();
+        return crate::macos::capture_permissions_granted();
     }
 
     #[cfg(not(target_os = "macos"))]

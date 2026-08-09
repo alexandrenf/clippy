@@ -17,7 +17,8 @@
   --accent-soft: rgba(0, 122, 255, 0.11);
   --danger: #d70015;
   --shadow-card: 0 0.5px 0.5px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.045);
-  --shadow-panel: 0 18px 52px rgba(0, 0, 0, 0.24), 0 3px 12px rgba(0, 0, 0, 0.1);
+  /* Native transparent windows clip CSS shadows at their rectangular bounds. */
+  --shadow-panel: none;
   --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
 
@@ -521,21 +522,12 @@ kbd {
   background: var(--card);
   box-shadow: var(--shadow-card);
   border: 1px solid var(--hairline);
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
   position: relative;
 }
 
 .composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-card), 0 0 0 2px var(--accent-soft);
-}
-
-.composer-plus {
-  flex-shrink: 0;
-  width: 16px;
-  height: 16px;
-  margin-top: 1px;
-  color: var(--muted);
+  border-color: var(--hairline);
+  box-shadow: var(--shadow-card);
 }
 
 .composer textarea {
@@ -546,6 +538,10 @@ kbd {
   max-height: 120px;
   user-select: text;
   cursor: text;
+}
+
+.composer textarea:focus-visible {
+  outline: none;
 }
 
 .composer textarea::placeholder {

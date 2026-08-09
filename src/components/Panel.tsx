@@ -282,6 +282,20 @@ export default function Panel() {
       const target = e.target as HTMLElement;
       const inField = target.tagName === "TEXTAREA" || target.tagName === "INPUT";
       const mod = e.ctrlKey || e.metaKey;
+      const slashKey =
+        e.key === "/" ||
+        e.key === "?" ||
+        e.code === "Slash" ||
+        e.code === "IntlRo";
+
+      // `event.key` changes with the active keyboard layout. Brazilian Pro,
+      // for example, can expose the physical slash key as IntlRo. Handle the
+      // semantic and physical variants, and let the shortcut toggle the sheet.
+      if (mod && slashKey) {
+        e.preventDefault();
+        setShowHelp((v) => !v);
+        return;
+      }
 
       // Modal surfaces own their keyboard handling. Keeping list shortcuts out
       // prevents an arrow key in a menu from moving the selection behind it.
@@ -296,11 +310,6 @@ export default function Panel() {
       if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setShowSwitcher((v) => !v);
-        return;
-      }
-      if (mod && e.key === "/") {
-        e.preventDefault();
-        setShowHelp((v) => !v);
         return;
       }
       if (e.key === "Escape") {
@@ -505,7 +514,7 @@ export default function Panel() {
     ];
     if (IS_MAC) {
       entries.push({
-        label: accessibilityGranted ? "Accessibility: Allowed" : "Set Up Accessibility…",
+        label: accessibilityGranted ? "Capture permissions: Allowed" : "Set Up Capture Permissions…",
         disabled: accessibilityGranted === true,
         onClick: () => void requestAccessibility(),
       });
@@ -566,7 +575,7 @@ export default function Panel() {
           <span className="permission-icon" aria-hidden>⌘</span>
           <span>
             <strong>Enable instant capture</strong>
-            <small>Allow Accessibility for selection capture and Double Shift</small>
+            <small>Allow Accessibility and Input Monitoring for Double Shift</small>
           </span>
           <span className="permission-arrow" aria-hidden>›</span>
         </button>
@@ -699,9 +708,6 @@ export default function Panel() {
       )}
 
       <div className="composer">
-        <svg className="composer-plus" viewBox="0 0 16 16" width="16" height="16" aria-hidden>
-          <path d="M8 3.25v9.5M3.25 8h9.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
         <textarea
           ref={inputRef}
           autoFocus

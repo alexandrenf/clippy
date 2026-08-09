@@ -36,6 +36,8 @@ impl Drop for OwnedCf {
 extern "C" {
     fn AXIsProcessTrusted() -> u8;
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
+    fn CGPreflightListenEventAccess() -> bool;
+    fn CGRequestListenEventAccess() -> bool;
     fn AXUIElementCreateSystemWide() -> AXUIElementRef;
     fn AXUIElementCopyAttributeValue(
         element: AXUIElementRef,
@@ -174,6 +176,14 @@ pub fn accessibility_trusted() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
 }
 
+pub fn input_monitoring_trusted() -> bool {
+    unsafe { CGPreflightListenEventAccess() }
+}
+
+pub fn capture_permissions_granted() -> bool {
+    accessibility_trusted() && input_monitoring_trusted()
+}
+
 /// Ask macOS to explain the Accessibility requirement. The return value is the
 /// current status; permission changes after the system prompt are asynchronous.
 pub fn request_accessibility_permission() -> bool {
@@ -189,11 +199,13 @@ pub fn request_accessibility_permission() -> bool {
             ptr::null(),
         );
         if options.is_null() {
-            return accessibility_trusted();
+            let listening = CGRequestListenEventAccess();
+            return accessibility_trusted() && listening;
         }
         let trusted = AXIsProcessTrustedWithOptions(options) != 0;
         CFRelease(options);
-        trusted
+        let listening = CGRequestListenEventAccess();
+        trusted && listening
     }
 }
 

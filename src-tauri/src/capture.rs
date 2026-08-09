@@ -60,6 +60,7 @@ fn enqueue(request: CaptureRequest) {
 /// Global low-level keyboard listener: Left Shift x2 captures the current
 /// selection, Right Shift x2 toggles the panel. Runs on its own thread; if the
 /// OS denies the hook, the standard fallback shortcuts below still work.
+#[cfg(not(target_os = "macos"))]
 pub fn start_double_shift_listener(app: AppHandle) {
     std::thread::spawn(move || {
         let mut pressed: Option<(Side, Instant)> = None;
@@ -120,6 +121,230 @@ pub fn start_double_shift_listener(app: AppHandle) {
             eprintln!("cooper: global keyboard listener unavailable ({e:?}); double-shift shortcuts disabled, fallback hotkeys still active");
         }
     });
+}
+
+/// macOS 26 traps when rdev asks Carbon to translate a key into text from its
+/// event-tap thread. Cooper only needs physical shift keycodes, so use a small
+/// keycode-only event tap and avoid the keyboard-layout APIs entirely.
+#[cfg(target_os = "macos")]
+pub fn start_double_shift_listener(app: AppHandle) {
+    macos_key_tap::start(app);
+}
+
+#[cfg(target_os = "macos")]
+mod macos_key_tap {
+    use super::{capture_selection, panel, AppHandle, Side, HOLD_LIMIT, TAP_WINDOW};
+    use std::ffi::c_void;
+    use std::ptr;
+    use std::time::{Duration, Instant};
+
+    type CgEventRef = *mut c_void;
+    type CgEventTapProxy = *mut c_void;
+    type CfMachPortRef = *mut c_void;
+    type CfRunLoopSourceRef = *mut c_void;
+    type CfRunLoopRef = *mut c_void;
+    type CfRunLoopMode = *const c_void;
+
+    const KEY_DOWN: u32 = 10;
+    const FLAGS_CHANGED: u32 = 12;
+    const TAP_DISABLED_BY_TIMEOUT: u32 = u32::MAX - 1;
+    const TAP_DISABLED_BY_USER_INPUT: u32 = u32::MAX;
+    const KEYBOARD_EVENT_KEYCODE: u32 = 9;
+    const SHIFT_LEFT: i64 = 56;
+    const SHIFT_RIGHT: i64 = 60;
+    const EVENT_MASK: u64 = (1 << KEY_DOWN) | (1 << FLAGS_CHANGED);
+
+    struct ListenerState {
+        app: AppHandle,
+        tap: CfMachPortRef,
+        left_down: bool,
+        right_down: bool,
+        pressed: Option<(Side, Instant)>,
+        dirty: bool,
+        last_tap: Option<(Side, Instant)>,
+    }
+
+    impl ListenerState {
+        fn shift_changed(&mut self, side: Side) {
+            let down = match side {
+                Side::Left => &mut self.left_down,
+                Side::Right => &mut self.right_down,
+            };
+            if !*down {
+                *down = true;
+                if self.pressed.is_none() {
+                    self.pressed = Some((side, Instant::now()));
+                    self.dirty = false;
+                } else {
+                    self.dirty = true;
+                    self.last_tap = None;
+                }
+                return;
+            }
+
+            *down = false;
+            let tap_ok = matches!(
+                self.pressed,
+                Some((pressed_side, started))
+                    if pressed_side == side && !self.dirty && started.elapsed() < HOLD_LIMIT
+            );
+            self.pressed = None;
+            if !tap_ok {
+                self.last_tap = None;
+                return;
+            }
+
+            if let Some((last_side, last_time)) = self.last_tap {
+                if last_side == side && last_time.elapsed() < TAP_WINDOW {
+                    self.last_tap = None;
+                    match side {
+                        Side::Left => capture_selection(&self.app),
+                        Side::Right => {
+                            let app = self.app.clone();
+                            let scheduler = app.clone();
+                            if let Err(error) =
+                                scheduler.run_on_main_thread(move || panel::toggle(&app))
+                            {
+                                eprintln!("cooper: could not toggle panel: {error}");
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+            self.last_tap = Some((side, Instant::now()));
+        }
+    }
+
+    unsafe extern "C" fn event_callback(
+        _proxy: CgEventTapProxy,
+        event_type: u32,
+        event: CgEventRef,
+        user_info: *mut c_void,
+    ) -> CgEventRef {
+        if user_info.is_null() {
+            return event;
+        }
+        let state = &mut *user_info.cast::<ListenerState>();
+        if event_type == TAP_DISABLED_BY_TIMEOUT || event_type == TAP_DISABLED_BY_USER_INPUT {
+            if !state.tap.is_null() {
+                CGEventTapEnable(state.tap, true);
+            }
+            return event;
+        }
+        if event.is_null() {
+            return event;
+        }
+        if event_type == KEY_DOWN {
+            state.dirty = true;
+            state.last_tap = None;
+        } else if event_type == FLAGS_CHANGED {
+            match CGEventGetIntegerValueField(event, KEYBOARD_EVENT_KEYCODE) {
+                SHIFT_LEFT => state.shift_changed(Side::Left),
+                SHIFT_RIGHT => state.shift_changed(Side::Right),
+                _ => {}
+            }
+        }
+        event
+    }
+
+    pub fn start(app: AppHandle) {
+        let _ = std::thread::Builder::new()
+            .name("cooper-key-listener".into())
+            .spawn(move || unsafe {
+                loop {
+                    // An ad-hoc rebuild changes the app's code identity and can
+                    // invalidate its previous Input Monitoring grant. Wait for
+                    // the user to re-authorize it instead of permanently
+                    // abandoning Double Shift during this launch.
+                    while !CGPreflightListenEventAccess() {
+                        std::thread::sleep(Duration::from_secs(1));
+                    }
+
+                    let state = Box::new(ListenerState {
+                        app: app.clone(),
+                        tap: ptr::null_mut(),
+                        left_down: false,
+                        right_down: false,
+                        pressed: None,
+                        dirty: false,
+                        last_tap: None,
+                    });
+                    let state = Box::into_raw(state);
+                    let tap = CGEventTapCreate(
+                        0,
+                        0,
+                        1,
+                        EVENT_MASK,
+                        event_callback,
+                        state.cast::<c_void>(),
+                    );
+                    if tap.is_null() {
+                        drop(Box::from_raw(state));
+                        eprintln!("cooper: global keyboard listener unavailable; retrying");
+                        std::thread::sleep(Duration::from_secs(2));
+                        continue;
+                    }
+                    (*state).tap = tap;
+                    let source = CFMachPortCreateRunLoopSource(ptr::null(), tap, 0);
+                    if source.is_null() {
+                        CFRelease(tap.cast_const());
+                        drop(Box::from_raw(state));
+                        eprintln!(
+                            "cooper: could not create the macOS keyboard event source; retrying"
+                        );
+                        std::thread::sleep(Duration::from_secs(2));
+                        continue;
+                    }
+                    let run_loop = CFRunLoopGetCurrent();
+                    CFRunLoopAddSource(run_loop, source, kCFRunLoopCommonModes);
+                    CGEventTapEnable(tap, true);
+                    CFRunLoopRun();
+                    CFRelease(source.cast_const());
+                    CFRelease(tap.cast_const());
+                    drop(Box::from_raw(state));
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            });
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventTapCreate(
+            tap: u32,
+            place: u32,
+            options: u32,
+            events_of_interest: u64,
+            callback: unsafe extern "C" fn(
+                CgEventTapProxy,
+                u32,
+                CgEventRef,
+                *mut c_void,
+            ) -> CgEventRef,
+            user_info: *mut c_void,
+        ) -> CfMachPortRef;
+        fn CGEventTapEnable(tap: CfMachPortRef, enable: bool);
+        fn CGPreflightListenEventAccess() -> bool;
+        fn CGEventGetIntegerValueField(event: CgEventRef, field: u32) -> i64;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFMachPortCreateRunLoopSource(
+            allocator: *const c_void,
+            port: CfMachPortRef,
+            order: isize,
+        ) -> CfRunLoopSourceRef;
+        fn CFRunLoopGetCurrent() -> CfRunLoopRef;
+        fn CFRunLoopAddSource(
+            run_loop: CfRunLoopRef,
+            source: CfRunLoopSourceRef,
+            mode: CfRunLoopMode,
+        );
+        fn CFRunLoopRun();
+        fn CFRelease(value: *const c_void);
+        static kCFRunLoopCommonModes: CfRunLoopMode;
+    }
 }
 
 /// Standard hotkeys remain available when the raw modifier listener is denied.
