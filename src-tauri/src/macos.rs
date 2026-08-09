@@ -44,11 +44,6 @@ extern "C" {
     ) -> i32;
     fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, timeout: f32) -> i32;
 
-    static kAXFocusedUIElementAttribute: CFStringRef;
-    static kAXParentAttribute: CFStringRef;
-    static kAXSelectedTextAttribute: CFStringRef;
-    static kAXSubroleAttribute: CFStringRef;
-    static kAXSecureTextFieldSubrole: CFStringRef;
     static kAXTrustedCheckOptionPrompt: CFStringRef;
 }
 
@@ -66,6 +61,11 @@ extern "C" {
         buffer_size: isize,
         encoding: u32,
     ) -> u8;
+    fn CFStringCreateWithCString(
+        allocator: *const c_void,
+        value: *const c_char,
+        encoding: u32,
+    ) -> CFStringRef;
     fn CFDictionaryCreate(
         allocator: *const c_void,
         keys: *const *const c_void,
@@ -75,6 +75,12 @@ extern "C" {
         value_callbacks: *const c_void,
     ) -> CFDictionaryRef;
     static kCFBooleanTrue: CFTypeRef;
+}
+
+unsafe fn ax_name(value: &'static [u8]) -> Option<OwnedCf> {
+    let value = CStr::from_bytes_with_nul_unchecked(value);
+    let string = CFStringCreateWithCString(ptr::null(), value.as_ptr(), UTF8);
+    (!string.is_null()).then_some(OwnedCf(string))
 }
 
 unsafe fn copy_attribute(element: AXUIElementRef, attribute: CFStringRef) -> Option<OwnedCf> {
@@ -109,24 +115,43 @@ pub fn selected_text() -> Selection {
             return Selection::PermissionDenied;
         }
 
+        // These Accessibility names are CFSTR header constants rather than
+        // exported linker symbols on current macOS SDKs, so construct their
+        // documented string values once for this short capture operation.
+        let Some(focused_attribute) = ax_name(b"AXFocusedUIElement\0") else {
+            return Selection::Unsupported;
+        };
+        let Some(parent_attribute) = ax_name(b"AXParent\0") else {
+            return Selection::Unsupported;
+        };
+        let Some(selected_text_attribute) = ax_name(b"AXSelectedText\0") else {
+            return Selection::Unsupported;
+        };
+        let Some(subrole_attribute) = ax_name(b"AXSubrole\0") else {
+            return Selection::Unsupported;
+        };
+        let Some(secure_text_subrole) = ax_name(b"AXSecureTextField\0") else {
+            return Selection::Unsupported;
+        };
+
         let system = OwnedCf(AXUIElementCreateSystemWide());
         if system.0.is_null() {
             return Selection::Unsupported;
         }
-        let Some(mut element) = copy_attribute(system.0, kAXFocusedUIElementAttribute) else {
+        let Some(mut element) = copy_attribute(system.0, focused_attribute.0) else {
             return Selection::Unsupported;
         };
 
         for _ in 0..=6 {
             let _ = AXUIElementSetMessagingTimeout(element.0, 0.2);
 
-            if let Some(subrole) = copy_attribute(element.0, kAXSubroleAttribute) {
-                if CFEqual(subrole.0, kAXSecureTextFieldSubrole) != 0 {
+            if let Some(subrole) = copy_attribute(element.0, subrole_attribute.0) {
+                if CFEqual(subrole.0, secure_text_subrole.0) != 0 {
                     return Selection::Protected;
                 }
             }
 
-            if let Some(selected) = copy_attribute(element.0, kAXSelectedTextAttribute) {
+            if let Some(selected) = copy_attribute(element.0, selected_text_attribute.0) {
                 if let Some(text) = cf_string(selected.0) {
                     return if text.is_empty() {
                         Selection::Empty
@@ -136,7 +161,7 @@ pub fn selected_text() -> Selection {
                 }
             }
 
-            let Some(parent) = copy_attribute(element.0, kAXParentAttribute) else {
+            let Some(parent) = copy_attribute(element.0, parent_attribute.0) else {
                 return Selection::Unsupported;
             };
             element = parent;
