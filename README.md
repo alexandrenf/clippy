@@ -64,7 +64,7 @@ First-run notes:
 | Capture selected text (any app) | `Left Shift` + `Left Shift` |
 | Show / hide Cooper (any app) | `Right Shift` + `Right Shift` |
 | Show / hide (fallback) | `Ctrl/Cmd` + `Shift` + `Space` |
-| Capture (fallback) | `Ctrl/Cmd` + `Shift` + `C` |
+| Capture (fallback) | `Ctrl/Cmd` + `Alt/Option` + `C` |
 | Switch / create section | `Ctrl/Cmd` + `K` |
 | Copy selected · Copy as list | `Ctrl/Cmd` + `C` · `Ctrl/Cmd` + `Shift` + `C` |
 | Mark as done / Edit / Delete | `Space` / `Enter` / `Del` |
@@ -108,14 +108,18 @@ One Tauri 2 codebase (Rust core + web UI in the OS webview) compiles to a
 
 ## Platform notes
 
-- **macOS** — the double-shift capture uses a low-level event tap, which
-  requires the Accessibility permission. Without it, the fallback hotkeys
-  still work.
-- **Linux** — the raw keyboard hook works on X11; on Wayland use the fallback
-  hotkeys.
-- **Capture mechanics** — capturing simulates the platform copy chord and
-  reads the clipboard. If nothing was selected, your previous clipboard is
-  restored untouched.
+- **macOS** — Cooper asks for Accessibility access on first run and links
+  directly to *System Settings → Privacy & Security → Accessibility* if setup
+  is incomplete. It reads the focused app's selected text through the native
+  Accessibility API first, without touching the clipboard.
+- **Linux** — the raw keyboard hook works on X11. Global shortcuts and tray
+  support vary by Wayland compositor, so test them in your desktop session;
+  the tray's *Capture clipboard* action remains available where a tray is shown.
+- **Capture mechanics** — on macOS, apps that do not expose selection through
+  Accessibility use a copy/pasteboard compatibility path. Cooper no longer
+  writes a detection sentinel, so an empty capture cannot erase clipboard
+  images, files, rich text, or custom data. A successful compatibility capture
+  leaves the selected text on the clipboard, just like pressing Copy.
 
 ## Data
 

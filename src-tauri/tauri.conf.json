@@ -23,14 +23,21 @@
         "transparent": true,
         "shadow": false,
         "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "acceptFirstMouse": true,
         "skipTaskbar": true,
         "resizable": true,
-        "visible": true,
+        "visible": false,
         "center": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": "ipc: http://ipc.localhost",
+        "img-src": "'self' asset: http://asset.localhost data:",
+        "style-src": "'self' 'unsafe-inline'"
+      }
     }
   },
   "bundle": {

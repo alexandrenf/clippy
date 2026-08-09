@@ -4,6 +4,10 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub const MAX_ITEM_CHARS: usize = 100_000;
+pub const MAX_SECTION_CHARS: usize = 80;
+pub const MAX_BATCH_ITEMS: usize = 10_000;
+
 pub struct Db(pub Mutex<Connection>);
 
 #[derive(Serialize, Clone)]
@@ -45,6 +49,8 @@ pub fn init(path: &Path) -> rusqlite::Result<Connection> {
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
          PRAGMA foreign_keys = ON;
+         PRAGMA synchronous = NORMAL;
+         PRAGMA busy_timeout = 1000;
          CREATE TABLE IF NOT EXISTS sections(
            id INTEGER PRIMARY KEY AUTOINCREMENT,
            name TEXT NOT NULL,
@@ -61,7 +67,8 @@ pub fn init(path: &Path) -> rusqlite::Result<Connection> {
          CREATE TABLE IF NOT EXISTS settings(
            key TEXT PRIMARY KEY,
            value TEXT NOT NULL
-         );",
+         );
+         CREATE INDEX IF NOT EXISTS idx_items_section_id ON items(section_id, id);",
     )?;
     Ok(conn)
 }
@@ -106,6 +113,29 @@ pub fn set_active_section(conn: &Connection, id: Option<i64>) -> rusqlite::Resul
     )
 }
 
+pub fn section_exists(conn: &Connection, id: i64) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sections WHERE id = ?1)",
+        params![id],
+        |row| row.get(0),
+    )
+}
+
+pub fn section_name_exists(
+    conn: &Connection,
+    name: &str,
+    except_id: Option<i64>,
+) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM sections
+           WHERE name = ?1 COLLATE NOCASE AND (?2 IS NULL OR id != ?2)
+         )",
+        params![name, except_id],
+        |row| row.get(0),
+    )
+}
+
 pub fn list_sections(conn: &Connection) -> rusqlite::Result<Vec<Section>> {
     let mut stmt = conn.prepare("SELECT id, name FROM sections ORDER BY id")?;
     let rows = stmt.query_map([], |r| {
@@ -143,13 +173,34 @@ pub fn get_state(conn: &Connection) -> rusqlite::Result<AppState> {
     })
 }
 
-pub fn insert_item(conn: &Connection, content: &str, section_id: Option<i64>) -> rusqlite::Result<i64> {
+pub fn insert_item(
+    conn: &Connection,
+    content: &str,
+    section_id: Option<i64>,
+) -> rusqlite::Result<i64> {
     let t = now_ms();
     conn.execute(
         "INSERT INTO items(section_id, content, done, created_at, updated_at) VALUES(?1, ?2, 0, ?3, ?3)",
         params![section_id, content, t],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+pub fn is_recent_duplicate(
+    conn: &Connection,
+    content: &str,
+    section_id: Option<i64>,
+    since: i64,
+) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+           SELECT 1
+           FROM (SELECT section_id, content, created_at FROM items ORDER BY id DESC LIMIT 1)
+           WHERE section_id IS ?1 AND content = ?2 AND created_at >= ?3
+         )",
+        params![section_id, content, since],
+        |row| row.get(0),
+    )
 }
 
 /// Find a section by name (case-insensitive) or create it. Returns its id.

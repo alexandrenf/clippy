@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { renderInline } from "../markdown";
 import type { Item } from "../types";
 
@@ -6,15 +6,15 @@ interface Props {
   item: Item;
   selected: boolean;
   editing: boolean;
-  onClick: (e: React.MouseEvent) => void;
-  onContextMenu: (e: React.MouseEvent) => void;
-  onToggleDone: () => void;
-  onEditSave: (content: string) => void;
+  onClick: (e: React.MouseEvent, id: number) => void;
+  onContextMenu: (e: React.MouseEvent, id: number) => void;
+  onToggleDone: (id: number) => void;
+  onEditSave: (id: number, content: string) => void | Promise<void>;
   onEditCancel: () => void;
-  onDoubleClick: () => void;
+  onDoubleClick: (id: number) => void;
 }
 
-export default function ItemCard({
+function ItemCard({
   item,
   selected,
   editing,
@@ -27,6 +27,7 @@ export default function ItemCard({
 }: Props) {
   const [draft, setDraft] = useState(item.content);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const savingRef = useRef(false);
 
   useEffect(() => {
     if (editing) {
@@ -41,6 +42,16 @@ export default function ItemCard({
     }
   }, [editing, item.content]);
 
+  const save = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    try {
+      await onEditSave(item.id, draft);
+    } finally {
+      savingRef.current = false;
+    }
+  };
+
   const classes = ["card"];
   if (selected) classes.push("selected");
   if (item.done) classes.push("done");
@@ -49,18 +60,22 @@ export default function ItemCard({
     <div
       className={classes.join(" ")}
       data-item-id={item.id}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-      onDoubleClick={onDoubleClick}
+      role="option"
+      aria-selected={selected}
+      aria-label={`${item.done ? "Completed" : "Open"} note: ${item.content}`}
+      onClick={(event) => onClick(event, item.id)}
+      onContextMenu={(event) => onContextMenu(event, item.id)}
+      onDoubleClick={() => onDoubleClick(item.id)}
     >
       <button
         className={`check${item.done ? " checked" : ""}`}
         title={item.done ? "Mark as not done" : "Mark as done"}
+        aria-label={item.done ? "Mark as not done" : "Mark as done"}
+        aria-pressed={item.done}
         onClick={(e) => {
           e.stopPropagation();
-          onToggleDone();
+          onToggleDone(item.id);
         }}
-        tabIndex={-1}
       >
         {item.done && (
           <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden>
@@ -90,12 +105,13 @@ export default function ItemCard({
             e.stopPropagation();
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              onEditSave(draft);
+              void save();
             } else if (e.key === "Escape") {
               onEditCancel();
             }
           }}
-          onBlur={() => onEditSave(draft)}
+          onBlur={() => void save()}
+          aria-label="Edit note"
         />
       ) : (
         <div className="card-content">{renderInline(item.content)}</div>
@@ -103,3 +119,20 @@ export default function ItemCard({
     </div>
   );
 }
+
+export default memo(ItemCard, (previous, next) => {
+  return (
+    previous.item.id === next.item.id &&
+    previous.item.content === next.item.content &&
+    previous.item.done === next.item.done &&
+    previous.item.sectionId === next.item.sectionId &&
+    previous.selected === next.selected &&
+    previous.editing === next.editing &&
+    previous.onClick === next.onClick &&
+    previous.onContextMenu === next.onContextMenu &&
+    previous.onToggleDone === next.onToggleDone &&
+    previous.onEditSave === next.onEditSave &&
+    previous.onEditCancel === next.onEditCancel &&
+    previous.onDoubleClick === next.onDoubleClick
+  );
+});

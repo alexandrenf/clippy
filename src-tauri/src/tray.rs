@@ -7,10 +7,22 @@ use crate::{capture, panel};
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show / Hide Cooper", true, None::<&str>)?;
-    let cap_clip = MenuItem::with_id(app, "capture-clipboard", "Capture clipboard", true, None::<&str>)?;
+    let cap_clip = MenuItem::with_id(
+        app,
+        "capture-clipboard",
+        "Capture clipboard",
+        true,
+        None::<&str>,
+    )?;
     let autostart_on = app.autolaunch().is_enabled().unwrap_or(false);
-    let autostart =
-        CheckMenuItem::with_id(app, "autostart", "Start at login", true, autostart_on, None::<&str>)?;
+    let autostart = CheckMenuItem::with_id(
+        app,
+        "autostart",
+        "Start at login",
+        true,
+        autostart_on,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Quit Cooper", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
@@ -26,11 +38,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 
     let autostart_item = autostart.clone();
     TrayIconBuilder::with_id("cooper-tray")
-        .icon(
-            app.default_window_icon()
-                .expect("app icon missing")
-                .clone(),
-        )
+        .icon(app.default_window_icon().expect("app icon missing").clone())
         .tooltip("Cooper — double-tap Right Shift to open")
         .menu(&menu)
         .show_menu_on_left_click(false)

@@ -12,6 +12,52 @@ fn refresh(app: &AppHandle) {
     let _ = app.emit("refresh", ());
 }
 
+fn item_content(content: &str) -> CmdResult<&str> {
+    let content = content.trim();
+    if content.is_empty() {
+        return Err("A note cannot be empty".into());
+    }
+    if content.chars().count() > db::MAX_ITEM_CHARS {
+        return Err(format!(
+            "A note cannot be longer than {} characters",
+            db::MAX_ITEM_CHARS
+        ));
+    }
+    Ok(content)
+}
+
+fn section_name(name: &str) -> CmdResult<&str> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("A section name cannot be empty".into());
+    }
+    if name.chars().count() > db::MAX_SECTION_CHARS {
+        return Err(format!(
+            "A section name cannot be longer than {} characters",
+            db::MAX_SECTION_CHARS
+        ));
+    }
+    if name.contains('\n') || name.contains('\r') {
+        return Err("A section name must fit on one line".into());
+    }
+    Ok(name)
+}
+
+fn item_ids(mut ids: Vec<i64>) -> CmdResult<Vec<i64>> {
+    if ids.is_empty() {
+        return Ok(ids);
+    }
+    if ids.len() > db::MAX_BATCH_ITEMS {
+        return Err("Too many items in one operation".into());
+    }
+    if ids.iter().any(|id| *id <= 0) {
+        return Err("Invalid item id".into());
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
+}
+
 #[tauri::command]
 pub fn get_state(db: State<db::Db>) -> CmdResult<db::AppState> {
     let conn = db.0.lock().map_err(err)?;
@@ -22,17 +68,12 @@ pub fn get_state(db: State<db::Db>) -> CmdResult<db::AppState> {
 /// switches to) a section instead of adding an item.
 #[tauri::command]
 pub fn add_entry(app: AppHandle, db: State<db::Db>, content: String) -> CmdResult<()> {
-    let text = content.trim();
-    if text.is_empty() {
-        return Ok(());
-    }
+    let text = item_content(&content)?;
     let conn = db.0.lock().map_err(err)?;
     if let Some(name) = text.strip_prefix("# ") {
-        let name = name.trim();
-        if !name.is_empty() {
-            let id = db::find_or_create_section(&conn, name).map_err(err)?;
-            db::set_active_section(&conn, Some(id)).map_err(err)?;
-        }
+        let name = section_name(name)?;
+        let id = db::find_or_create_section(&conn, name).map_err(err)?;
+        db::set_active_section(&conn, Some(id)).map_err(err)?;
     } else {
         let active = db::get_active_section(&conn);
         db::insert_item(&conn, text, active).map_err(err)?;
@@ -43,13 +84,27 @@ pub fn add_entry(app: AppHandle, db: State<db::Db>, content: String) -> CmdResul
 }
 
 #[tauri::command]
-pub fn toggle_done(app: AppHandle, db: State<db::Db>, id: i64) -> CmdResult<()> {
-    let conn = db.0.lock().map_err(err)?;
-    conn.execute(
-        "UPDATE items SET done = 1 - done, updated_at = ?2 WHERE id = ?1",
-        rusqlite::params![id, db::now_ms()],
-    )
-    .map_err(err)?;
+pub fn set_items_done(
+    app: AppHandle,
+    db: State<db::Db>,
+    ids: Vec<i64>,
+    done: bool,
+) -> CmdResult<()> {
+    let ids = item_ids(ids)?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut conn = db.0.lock().map_err(err)?;
+    let tx = conn.transaction().map_err(err)?;
+    let now = db::now_ms();
+    for id in ids {
+        tx.execute(
+            "UPDATE items SET done = ?2, updated_at = ?3 WHERE id = ?1",
+            rusqlite::params![id, done, now],
+        )
+        .map_err(err)?;
+    }
+    tx.commit().map_err(err)?;
     drop(conn);
     refresh(&app);
     Ok(())
@@ -57,22 +112,35 @@ pub fn toggle_done(app: AppHandle, db: State<db::Db>, id: i64) -> CmdResult<()> 
 
 #[tauri::command]
 pub fn update_item(app: AppHandle, db: State<db::Db>, id: i64, content: String) -> CmdResult<()> {
+    let content = item_content(&content)?;
     let conn = db.0.lock().map_err(err)?;
-    conn.execute(
-        "UPDATE items SET content = ?2, updated_at = ?3 WHERE id = ?1",
-        rusqlite::params![id, content.trim(), db::now_ms()],
-    )
-    .map_err(err)?;
+    let updated = conn
+        .execute(
+            "UPDATE items SET content = ?2, updated_at = ?3 WHERE id = ?1",
+            rusqlite::params![id, content, db::now_ms()],
+        )
+        .map_err(err)?;
+    if updated == 0 {
+        return Err("That note no longer exists".into());
+    }
     drop(conn);
     refresh(&app);
     Ok(())
 }
 
 #[tauri::command]
-pub fn delete_item(app: AppHandle, db: State<db::Db>, id: i64) -> CmdResult<()> {
-    let conn = db.0.lock().map_err(err)?;
-    conn.execute("DELETE FROM items WHERE id = ?1", rusqlite::params![id])
-        .map_err(err)?;
+pub fn delete_items(app: AppHandle, db: State<db::Db>, ids: Vec<i64>) -> CmdResult<()> {
+    let ids = item_ids(ids)?;
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut conn = db.0.lock().map_err(err)?;
+    let tx = conn.transaction().map_err(err)?;
+    for id in ids {
+        tx.execute("DELETE FROM items WHERE id = ?1", rusqlite::params![id])
+            .map_err(err)?;
+    }
+    tx.commit().map_err(err)?;
     drop(conn);
     refresh(&app);
     Ok(())
@@ -91,6 +159,11 @@ pub fn clear_completed(app: AppHandle, db: State<db::Db>) -> CmdResult<()> {
 #[tauri::command]
 pub fn set_active_section(app: AppHandle, db: State<db::Db>, id: Option<i64>) -> CmdResult<()> {
     let conn = db.0.lock().map_err(err)?;
+    if let Some(id) = id {
+        if !db::section_exists(&conn, id).map_err(err)? {
+            return Err("That section no longer exists".into());
+        }
+    }
     db::set_active_section(&conn, id).map_err(err)?;
     drop(conn);
     refresh(&app);
@@ -99,8 +172,9 @@ pub fn set_active_section(app: AppHandle, db: State<db::Db>, id: Option<i64>) ->
 
 #[tauri::command]
 pub fn create_section(app: AppHandle, db: State<db::Db>, name: String) -> CmdResult<i64> {
+    let name = section_name(&name)?;
     let conn = db.0.lock().map_err(err)?;
-    let id = db::find_or_create_section(&conn, name.trim()).map_err(err)?;
+    let id = db::find_or_create_section(&conn, name).map_err(err)?;
     db::set_active_section(&conn, Some(id)).map_err(err)?;
     drop(conn);
     refresh(&app);
@@ -109,10 +183,14 @@ pub fn create_section(app: AppHandle, db: State<db::Db>, name: String) -> CmdRes
 
 #[tauri::command]
 pub fn rename_section(app: AppHandle, db: State<db::Db>, id: i64, name: String) -> CmdResult<()> {
+    let name = section_name(&name)?;
     let conn = db.0.lock().map_err(err)?;
+    if db::section_name_exists(&conn, name, Some(id)).map_err(err)? {
+        return Err("A section with that name already exists".into());
+    }
     conn.execute(
         "UPDATE sections SET name = ?2 WHERE id = ?1",
-        rusqlite::params![id, name.trim()],
+        rusqlite::params![id, name],
     )
     .map_err(err)?;
     drop(conn);
@@ -141,11 +219,15 @@ pub fn delete_section(app: AppHandle, db: State<db::Db>, id: i64) -> CmdResult<(
 
 #[tauri::command]
 pub fn set_theme(app: AppHandle, db: State<db::Db>, theme: String) -> CmdResult<()> {
+    if !matches!(theme.as_str(), "system" | "light" | "dark" | "glass") {
+        return Err("Unknown appearance".into());
+    }
     {
         let conn = db.0.lock().map_err(err)?;
         db::set_setting(&conn, "theme", &theme).map_err(err)?;
     }
     glass::apply_all(&app, theme == "glass");
+    refresh(&app);
     Ok(())
 }
 
@@ -185,14 +267,33 @@ pub fn export_markdown(app: AppHandle, db: State<db::Db>) -> CmdResult<String> {
         .path()
         .resolve("", BaseDirectory::Document)
         .map_err(err)?;
-    let path = dir.join("cooper-export.md");
-    std::fs::write(&path, md).map_err(err)?;
-    Ok(path.to_string_lossy().into_owned())
+    for suffix in 0..10_000 {
+        let name = if suffix == 0 {
+            "cooper-export.md".to_string()
+        } else {
+            format!("cooper-export-{suffix}.md")
+        };
+        let path = dir.join(name);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                use std::io::Write;
+                file.write_all(md.as_bytes()).map_err(err)?;
+                return Ok(path.to_string_lossy().into_owned());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(err(e)),
+        }
+    }
+    Err("Too many Cooper exports in Documents".into())
 }
 
 #[tauri::command]
 pub fn capture_now(app: AppHandle) {
-    capture::capture_selection(&app);
+    capture::capture_clipboard(&app);
 }
 
 #[tauri::command]
@@ -231,4 +332,41 @@ pub fn open_editor(app: AppHandle, db: State<db::Db>, id: i64) -> CmdResult<()> 
         glass::apply(&win, true);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn open_accessibility_settings() -> CmdResult<()> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn()
+            .map_err(err)?;
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    Err("Accessibility Settings is only available on macOS".into())
+}
+
+#[tauri::command]
+pub fn accessibility_status() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return crate::macos::accessibility_trusted();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    true
+}
+
+#[tauri::command]
+pub fn request_accessibility_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return crate::macos::request_accessibility_permission();
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    true
 }

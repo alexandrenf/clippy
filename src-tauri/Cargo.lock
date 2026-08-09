@@ -598,6 +598,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "enigo",
+ "objc2-app-kit",
  "rdev",
  "rusqlite",
  "serde",

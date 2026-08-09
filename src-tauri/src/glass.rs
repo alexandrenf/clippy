@@ -41,8 +41,8 @@ fn set_effect(window: &WebviewWindow, enable: bool) {
     if enable {
         if let Err(e) = window_vibrancy::apply_vibrancy(
             window,
-            NSVisualEffectMaterial::HudWindow,
-            Some(NSVisualEffectState::Active),
+            NSVisualEffectMaterial::Popover,
+            Some(NSVisualEffectState::FollowsWindowActiveState),
             Some(12.0),
         ) {
             eprintln!("cooper: vibrancy unavailable: {e}");

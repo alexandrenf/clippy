@@ -4,6 +4,8 @@ mod capture;
 mod commands;
 mod db;
 mod glass;
+#[cfg(target_os = "macos")]
+mod macos;
 mod panel;
 mod tray;
 
@@ -17,15 +19,15 @@ fn main() {
         }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec!["--hidden"]),
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
             commands::add_entry,
-            commands::toggle_done,
+            commands::set_items_done,
             commands::update_item,
-            commands::delete_item,
+            commands::delete_items,
             commands::clear_completed,
             commands::set_active_section,
             commands::create_section,
@@ -37,8 +39,12 @@ fn main() {
             commands::capture_now,
             commands::hide_panel,
             commands::open_editor,
+            commands::accessibility_status,
+            commands::request_accessibility_permission,
+            commands::open_accessibility_settings,
         ])
         .setup(|app| {
+            let launch_hidden = std::env::args_os().any(|arg| arg == "--hidden");
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let conn = db::init(&data_dir.join("cooper.db"))?;
@@ -49,6 +55,7 @@ fn main() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             tray::create(app.handle())?;
+            capture::start_capture_worker(app.handle().clone());
             capture::register_fallback_shortcuts(app.handle());
             capture::start_double_shift_listener(app.handle().clone());
 
@@ -56,6 +63,10 @@ fn main() {
                 panel::position(&win);
                 if glass_on {
                     glass::apply(&win, true);
+                }
+                if !launch_hidden {
+                    let _ = win.show();
+                    let _ = win.set_focus();
                 }
             }
             Ok(())

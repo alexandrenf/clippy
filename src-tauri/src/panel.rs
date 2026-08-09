@@ -1,24 +1,30 @@
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
 
-/// Dock the panel to the right edge of the monitor it's on, vertically centered.
+/// Dock to the usable right edge of the screen under the pointer. This makes
+/// the global shortcut follow the active display and avoids the menu bar/Dock.
 pub fn position(win: &WebviewWindow) {
-    let monitor = match win.current_monitor() {
-        Ok(Some(m)) => m,
-        _ => match win.primary_monitor() {
+    let monitor = match win
+        .cursor_position()
+        .ok()
+        .and_then(|p| win.monitor_from_point(p.x, p.y).ok().flatten())
+        .or_else(|| win.current_monitor().ok().flatten())
+    {
+        Some(m) => m,
+        None => match win.primary_monitor() {
             Ok(Some(m)) => m,
             _ => return,
         },
     };
-    let msize = monitor.size();
-    let mpos = monitor.position();
+    let work = monitor.work_area();
     let scale = monitor.scale_factor();
     let wsize = match win.outer_size() {
         Ok(s) => s,
         Err(_) => return,
     };
     let margin = (16.0 * scale) as i32;
-    let x = mpos.x + msize.width as i32 - wsize.width as i32 - margin;
-    let y = mpos.y + ((msize.height as i32 - wsize.height as i32) / 2).max(margin);
+    let x = work.position.x + work.size.width as i32 - wsize.width as i32 - margin;
+    let available_height = work.size.height as i32;
+    let y = work.position.y + ((available_height - wsize.height as i32) / 2).max(margin);
     let _ = win.set_position(PhysicalPosition::new(x, y));
 }
 

@@ -1,14 +1,13 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{db, panel};
 
-/// Marker written to the clipboard before simulating copy, so we can tell
-/// "nothing was selected" apart from "the same text was copied again".
-const SENTINEL: &str = "\u{200B}cooper::capturing\u{200B}";
 const TAP_WINDOW: Duration = Duration::from_millis(400);
 const HOLD_LIMIT: Duration = Duration::from_millis(500);
+const COPY_DEADLINE: Duration = Duration::from_millis(450);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Side {
@@ -16,14 +15,55 @@ enum Side {
     Right,
 }
 
+#[derive(Clone, Copy)]
+enum CaptureRequest {
+    Selection,
+    Clipboard,
+}
+
+static CAPTURE_TX: OnceLock<SyncSender<CaptureRequest>> = OnceLock::new();
+
+/// One bounded worker serializes Accessibility, pasteboard, and database work.
+/// A burst can queue one extra request without spawning unbounded threads.
+pub fn start_capture_worker(app: AppHandle) {
+    let (tx, rx) = sync_channel(1);
+    if CAPTURE_TX.set(tx).is_err() {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("cooper-capture".into())
+        .spawn(move || {
+            while let Ok(request) = rx.recv() {
+                let result = match request {
+                    CaptureRequest::Selection => capture_selected_text(&app),
+                    CaptureRequest::Clipboard => capture_clipboard_text(&app),
+                };
+                if let Err(error) = result {
+                    eprintln!("cooper: capture failed: {error}");
+                    notify_error(&app, &error);
+                }
+            }
+        });
+}
+
+fn enqueue(request: CaptureRequest) {
+    let Some(tx) = CAPTURE_TX.get() else {
+        eprintln!("cooper: capture worker is not ready");
+        return;
+    };
+    match tx.try_send(request) {
+        Ok(()) | Err(TrySendError::Full(_)) => {}
+        Err(TrySendError::Disconnected(_)) => eprintln!("cooper: capture worker stopped"),
+    }
+}
+
 /// Global low-level keyboard listener: Left Shift x2 captures the current
 /// selection, Right Shift x2 toggles the panel. Runs on its own thread; if the
-/// OS denies the hook (e.g. missing macOS accessibility permission, Wayland),
-/// the fallback shortcuts registered below still work.
+/// OS denies the hook, the standard fallback shortcuts below still work.
 pub fn start_double_shift_listener(app: AppHandle) {
     std::thread::spawn(move || {
         let mut pressed: Option<(Side, Instant)> = None;
-        let mut dirty = false; // a non-shift key was pressed while shift was held
+        let mut dirty = false;
         let mut last_tap: Option<(Side, Instant)> = None;
 
         let result = rdev::listen(move |event| {
@@ -46,7 +86,8 @@ pub fn start_double_shift_listener(app: AppHandle) {
                     last_tap = None;
                 }
                 EventType::KeyRelease(Key::ShiftLeft) | EventType::KeyRelease(Key::ShiftRight) => {
-                    let side = if matches!(event.event_type, EventType::KeyRelease(Key::ShiftLeft)) {
+                    let side = if matches!(event.event_type, EventType::KeyRelease(Key::ShiftLeft))
+                    {
                         Side::Left
                     } else {
                         Side::Right
@@ -81,107 +122,141 @@ pub fn start_double_shift_listener(app: AppHandle) {
     });
 }
 
-/// Standard hotkeys for environments where the raw keyboard hook is
-/// unavailable (Wayland, denied permissions) or if the user prefers them.
+/// Standard hotkeys remain available when the raw modifier listener is denied.
+/// Capture on release so the synthetic fallback never races held modifiers.
 pub fn register_fallback_shortcuts(app: &AppHandle) {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
     let gs = app.global_shortcut();
     if let Err(e) = gs.on_shortcut("CmdOrCtrl+Shift+Space", |app, _shortcut, event| {
-        if event.state() == ShortcutState::Pressed {
+        if event.state() == ShortcutState::Released {
             panel::toggle(app);
         }
     }) {
         eprintln!("cooper: could not register CmdOrCtrl+Shift+Space: {e}");
     }
-    if let Err(e) = gs.on_shortcut("CmdOrCtrl+Shift+C", |app, _shortcut, event| {
-        if event.state() == ShortcutState::Pressed {
+    if let Err(e) = gs.on_shortcut("CmdOrCtrl+Alt+C", |app, _shortcut, event| {
+        if event.state() == ShortcutState::Released {
             capture_selection(app);
         }
     }) {
-        eprintln!("cooper: could not register CmdOrCtrl+Shift+C: {e}");
+        eprintln!("cooper: could not register CmdOrCtrl+Alt+C: {e}");
     }
 }
 
-/// Capture whatever text is selected in the foreground app by simulating the
-/// platform copy chord and reading the clipboard.
-pub fn capture_selection(app: &AppHandle) {
-    static CAPTURING: AtomicBool = AtomicBool::new(false);
-    if CAPTURING.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    let app = app.clone();
-    std::thread::spawn(move || {
-        if let Err(e) = do_capture(&app) {
-            eprintln!("cooper: capture failed: {e}");
+pub fn capture_selection(_app: &AppHandle) {
+    enqueue(CaptureRequest::Selection);
+}
+
+pub fn capture_clipboard(_app: &AppHandle) {
+    enqueue(CaptureRequest::Clipboard);
+}
+
+fn capture_selected_text(app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    match crate::macos::selected_text() {
+        crate::macos::Selection::Text(text) => return add_text_item(app, &text),
+        crate::macos::Selection::Empty => {
+            let _ = app.emit("capture-empty", ());
+            return Ok(());
         }
-        CAPTURING.store(false, Ordering::SeqCst);
-    });
+        crate::macos::Selection::Protected => {
+            return Err("Cooper never captures text from secure fields".into())
+        }
+        crate::macos::Selection::PermissionDenied => {
+            panel::show(app);
+            return Err(
+                "Allow Cooper in System Settings → Privacy & Security → Accessibility".into(),
+            );
+        }
+        crate::macos::Selection::Unsupported => {}
+    }
+
+    capture_via_copy(app)
 }
 
-fn do_capture(app: &AppHandle) -> Result<(), String> {
-    let mut clip = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    let old = clip.get_text().ok();
-    let _ = clip.set_text(SENTINEL.to_string());
+/// Read the clipboard only after an explicit in-app action.
+fn capture_clipboard_text(app: &AppHandle) -> Result<(), String> {
+    let text = arboard::Clipboard::new()
+        .map_err(|e| e.to_string())?
+        .get_text()
+        .map_err(|_| "The clipboard does not contain text".to_string())?;
+    add_text_item(app, &text)
+}
 
-    // Let the user's shift release settle before injecting the copy chord.
-    std::thread::sleep(Duration::from_millis(60));
+/// Compatibility path for apps that do not expose selected text through macOS
+/// Accessibility. It never writes a sentinel, so an empty selection cannot
+/// destroy images, files, rich text, or custom pasteboard representations.
+fn capture_via_copy(app: &AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let generation = crate::macos::pasteboard_generation();
+
+    #[cfg(not(target_os = "macos"))]
+    let previous = arboard::Clipboard::new()
+        .ok()
+        .and_then(|mut clipboard| clipboard.get_text().ok());
+
     send_copy()?;
+    let started = Instant::now();
+    let mut delay = Duration::from_millis(5);
 
-    let mut captured = None;
-    for _ in 0..14 {
-        std::thread::sleep(Duration::from_millis(50));
-        if let Ok(text) = clip.get_text() {
-            if text != SENTINEL && !text.trim().is_empty() {
-                captured = Some(text);
-                break;
-            }
+    while started.elapsed() < COPY_DEADLINE {
+        std::thread::sleep(delay);
+
+        #[cfg(target_os = "macos")]
+        let changed = crate::macos::pasteboard_generation() != generation;
+
+        #[cfg(not(target_os = "macos"))]
+        let changed = arboard::Clipboard::new()
+            .ok()
+            .and_then(|mut clipboard| clipboard.get_text().ok())
+            .as_ref()
+            != previous.as_ref();
+
+        if changed {
+            let text = arboard::Clipboard::new()
+                .map_err(|e| e.to_string())?
+                .get_text()
+                .map_err(|_| "The selection does not contain text".to_string())?;
+            return add_text_item(app, &text);
         }
+        delay = (delay * 2).min(Duration::from_millis(25));
     }
 
-    match captured {
-        Some(text) => {
-            add_text_item(app, text.trim())?;
-            // The text stays on the clipboard — the user did just copy it.
-        }
-        None => {
-            // Nothing was selected; put the previous clipboard back.
-            match old {
-                Some(o) => {
-                    let _ = clip.set_text(o);
-                }
-                None => {
-                    let _ = clip.clear();
-                }
-            }
-        }
-    }
+    let _ = app.emit("capture-empty", ());
     Ok(())
 }
 
-/// Capture the clipboard as-is, without simulating a copy (tray menu action).
-pub fn capture_clipboard(app: &AppHandle) {
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let text = arboard::Clipboard::new()
-            .ok()
-            .and_then(|mut c| c.get_text().ok())
-            .unwrap_or_default();
-        if !text.trim().is_empty() {
-            let _ = add_text_item(&app, text.trim());
-        }
-    });
-}
-
 fn add_text_item(app: &AppHandle, text: &str) -> Result<(), String> {
-    let db = app.state::<db::Db>();
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    if !text.chars().any(|c| !c.is_whitespace()) {
+        let _ = app.emit("capture-empty", ());
+        return Ok(());
+    }
+    if text.chars().count() > db::MAX_ITEM_CHARS {
+        return Err(format!(
+            "Selection is longer than {} characters",
+            db::MAX_ITEM_CHARS
+        ));
+    }
+    let database = app.state::<db::Db>();
+    let conn = database.0.lock().map_err(|e| e.to_string())?;
     let active = db::get_active_section(&conn);
+    if db::is_recent_duplicate(&conn, text, active, db::now_ms() - 1_500)
+        .map_err(|e| e.to_string())?
+    {
+        drop(conn);
+        let _ = app.emit("capture-duplicate", ());
+        return Ok(());
+    }
     db::insert_item(&conn, text, active).map_err(|e| e.to_string())?;
     drop(conn);
     let _ = app.emit("refresh", ());
     let _ = app.emit("captured", ());
     Ok(())
+}
+
+fn notify_error(app: &AppHandle, message: &str) {
+    let _ = app.emit("capture-error", message);
 }
 
 fn send_copy() -> Result<(), String> {
@@ -191,12 +266,21 @@ fn send_copy() -> Result<(), String> {
     let modifier = Key::Meta;
     #[cfg(not(target_os = "macos"))]
     let modifier = Key::Control;
-    enigo.key(modifier, Direction::Press).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    let copy_key = Key::Unicode('c');
+    // Ctrl+C can send SIGINT to a terminal when no text is selected. The
+    // standard Ctrl+Insert copy chord avoids that destructive side effect.
+    #[cfg(not(target_os = "macos"))]
+    let copy_key = Key::Insert;
+
     enigo
-        .key(Key::Unicode('c'), Direction::Click)
+        .key(modifier, Direction::Press)
         .map_err(|e| e.to_string())?;
-    enigo
+    let clicked = enigo
+        .key(copy_key, Direction::Click)
+        .map_err(|e| e.to_string());
+    let released = enigo
         .key(modifier, Direction::Release)
-        .map_err(|e| e.to_string())?;
-    Ok(())
+        .map_err(|e| e.to_string());
+    clicked.and(released)
 }

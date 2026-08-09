@@ -52,10 +52,17 @@ export default function SectionSwitcher({
 
   return (
     <div className="overlay" onMouseDown={onClose}>
-      <div className="switcher" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="switcher"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Switch or create a section"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <input
           ref={inputRef}
           className="switcher-input"
+          aria-label="Find a section"
           placeholder="Switch or create a section…"
           value={query}
           onChange={(e) => {
@@ -78,11 +85,13 @@ export default function SectionSwitcher({
             }
           }}
         />
-        <div className="switcher-list">
+        <div className="switcher-list" role="listbox" aria-label="Sections">
           {rows.map((row, i) => (
             <button
               key={`${row.id}-${row.label}`}
               className={`switcher-row${i === index ? " active" : ""}${row.create ? " create" : ""}`}
+              role="option"
+              aria-selected={!row.create && row.id === activeSectionId}
               onMouseEnter={() => setIndex(i)}
               onClick={() => choose(row)}
             >

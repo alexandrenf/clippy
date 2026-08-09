@@ -12,9 +12,11 @@ export interface Item {
   updatedAt: number;
 }
 
+export type Theme = "system" | "light" | "dark" | "glass";
+
 export interface AppState {
   sections: Section[];
   items: Item[];
   activeSectionId: number | null;
-  theme: string;
+  theme: Theme;
 }
