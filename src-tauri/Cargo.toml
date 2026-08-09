@@ -1,8 +1,8 @@
 [package]
-name = "cooper"
+name = "clippy"
 version = "0.1.0"
-description = "Cooper — a FOSS capture panel for AI-assisted work"
-authors = ["Cooper contributors"]
+description = "Clippy — a polished capture panel for AI-assisted work"
+authors = ["Clippy contributors", "Cooper contributors"]
 license = "Apache-2.0"
 edition = "2021"
 
@@ -16,7 +16,7 @@ tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "backup"] }
 arboard = "3"
 window-vibrancy = "0.6"
 enigo = "0.2"

@@ -84,7 +84,7 @@ export default function Panel() {
       const granted = await api.requestAccessibilityPermission();
       setAccessibilityGranted(granted);
       if (!granted) {
-        flashToast("Finish setup in System Settings, then return to Cooper");
+        flashToast("Finish setup in System Settings, then return to Clippy");
         await api.openAccessibilitySettings();
       }
     } catch (cause) {
@@ -319,12 +319,12 @@ export default function Panel() {
           setSelected([]);
           return;
         }
-        void api.hidePanel().catch((cause) => reportError("Couldn’t hide Cooper", cause));
+        void api.hidePanel().catch((cause) => reportError("Couldn’t hide Clippy", cause));
         return;
       }
       if (mod && e.key.toLowerCase() === "w") {
         e.preventDefault();
-        void api.hidePanel().catch((cause) => reportError("Couldn’t hide Cooper", cause));
+        void api.hidePanel().catch((cause) => reportError("Couldn’t hide Clippy", cause));
         return;
       }
       if (inField || editingId !== null || showSwitcher || showHelp) return;
@@ -549,8 +549,8 @@ export default function Panel() {
         </div>
         <button
           className="icon-btn"
-          title="Cooper menu"
-          aria-label="Open Cooper menu"
+          title="Clippy menu"
+          aria-label="Open Clippy menu"
           aria-haspopup="menu"
           aria-expanded={!!appMenu}
           onClick={(e) => {
@@ -614,7 +614,7 @@ export default function Panel() {
                 </span>
               </div>
               <div className="empty-row">
-                <span>Show Cooper</span>
+                <span>Show Clippy</span>
                 <span>
                   <kbd>Right Shift</kbd> <kbd>Right Shift</kbd>
                 </span>

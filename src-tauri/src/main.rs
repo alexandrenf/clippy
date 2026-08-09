@@ -9,8 +9,29 @@ mod macos;
 mod panel;
 mod tray;
 
-use std::sync::Mutex;
+use std::{path::Path, sync::Mutex, time::Duration};
 use tauri::Manager;
+
+fn migrate_legacy_database(data_dir: &Path) -> rusqlite::Result<()> {
+    let target = data_dir.join("clippy.db");
+    if target.exists() {
+        return Ok(());
+    }
+
+    let Some(app_data_root) = data_dir.parent() else {
+        return Ok(());
+    };
+    let source = app_data_root.join("app.cooper.desktop").join("cooper.db");
+    if !source.exists() {
+        return Ok(());
+    }
+
+    let source_conn =
+        rusqlite::Connection::open_with_flags(source, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let mut target_conn = rusqlite::Connection::open(&target)?;
+    let backup = rusqlite::backup::Backup::new(&source_conn, &mut target_conn)?;
+    backup.run_to_completion(64, Duration::from_millis(10), None)
+}
 
 fn main() {
     tauri::Builder::default()
@@ -47,7 +68,11 @@ fn main() {
             let launch_hidden = std::env::args_os().any(|arg| arg == "--hidden");
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
-            let conn = db::init(&data_dir.join("cooper.db"))?;
+            if let Err(error) = migrate_legacy_database(&data_dir) {
+                let _ = std::fs::remove_file(data_dir.join("clippy.db"));
+                eprintln!("clippy: could not import the Cooper database: {error}");
+            }
+            let conn = db::init(&data_dir.join("clippy.db"))?;
             let glass_on = db::get_setting(&conn, "theme").as_deref() == Some("glass");
             app.manage(db::Db(Mutex::new(conn)));
 
@@ -81,5 +106,42 @@ fn main() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error while running Cooper");
+        .expect("error while running Clippy");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imports_the_legacy_cooper_database() {
+        let root = std::env::temp_dir().join(format!(
+            "clippy-migration-test-{}-{}",
+            std::process::id(),
+            db::now_ms()
+        ));
+        let legacy_dir = root.join("app.cooper.desktop");
+        let clippy_dir = root.join("app.clippy.desktop");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+        std::fs::create_dir_all(&clippy_dir).unwrap();
+
+        let legacy = db::init(&legacy_dir.join("cooper.db")).unwrap();
+        legacy
+            .execute(
+                "INSERT INTO sections(name, created_at) VALUES('Imported', 1)",
+                [],
+            )
+            .unwrap();
+        drop(legacy);
+
+        migrate_legacy_database(&clippy_dir).unwrap();
+        let imported = db::init(&clippy_dir.join("clippy.db")).unwrap();
+        let name: String = imported
+            .query_row("SELECT name FROM sections", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(name, "Imported");
+        drop(imported);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Clippy logo</title>
+  <desc id="desc">A simple continuous paperclip.</desc>
+  <path
+    d="M290 330V670c0 90 70 160 160 160s160-70 160-160V300c0-130-100-230-230-230S150 170 150 300v390c0 160 130 280 290 280s290-120 290-280V270"
+    fill="none"
+    stroke="#202126"
+    stroke-width="92"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    transform="rotate(18 440 520)"
+  />
+</svg>

@@ -1,12 +1,12 @@
 {
-  "name": "cooper",
+  "name": "clippy",
   "private": true,
   "version": "0.1.0",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/TouchMyBar/cooper.git"
+    "url": "https://github.com/alexandrenf/clippy.git"
   },
   "scripts": {
     "dev": "vite",

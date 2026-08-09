@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Cooper",
+  "productName": "Clippy",
   "version": "0.1.0",
-  "identifier": "app.cooper.desktop",
+  "identifier": "app.clippy.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Cooper",
+        "title": "Clippy",
         "width": 380,
         "height": 600,
         "minWidth": 300,
@@ -52,6 +52,6 @@
     ],
     "category": "Productivity",
     "shortDescription": "Capture things you want to keep while working with AI.",
-    "longDescription": "Cooper combines the useful parts of a to-do list, a clipboard, and a scratchpad. It sits next to where you work, is always one shortcut away, and works with all your AI apps, terminals and browsers. Local and private — no sync, no account."
+    "longDescription": "Clippy combines the useful parts of a to-do list, a clipboard, and a scratchpad. It sits next to where you work, is always one shortcut away, and works with all your AI apps, terminals and browsers. Local and private — no sync, no account."
   }
 }

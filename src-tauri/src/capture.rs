@@ -31,7 +31,7 @@ pub fn start_capture_worker(app: AppHandle) {
         return;
     }
     let _ = std::thread::Builder::new()
-        .name("cooper-capture".into())
+        .name("clippy-capture".into())
         .spawn(move || {
             while let Ok(request) = rx.recv() {
                 let result = match request {
@@ -39,7 +39,7 @@ pub fn start_capture_worker(app: AppHandle) {
                     CaptureRequest::Clipboard => capture_clipboard_text(&app),
                 };
                 if let Err(error) = result {
-                    eprintln!("cooper: capture failed: {error}");
+                    eprintln!("clippy: capture failed: {error}");
                     notify_error(&app, &error);
                 }
             }
@@ -48,12 +48,12 @@ pub fn start_capture_worker(app: AppHandle) {
 
 fn enqueue(request: CaptureRequest) {
     let Some(tx) = CAPTURE_TX.get() else {
-        eprintln!("cooper: capture worker is not ready");
+        eprintln!("clippy: capture worker is not ready");
         return;
     };
     match tx.try_send(request) {
         Ok(()) | Err(TrySendError::Full(_)) => {}
-        Err(TrySendError::Disconnected(_)) => eprintln!("cooper: capture worker stopped"),
+        Err(TrySendError::Disconnected(_)) => eprintln!("clippy: capture worker stopped"),
     }
 }
 
@@ -118,13 +118,13 @@ pub fn start_double_shift_listener(app: AppHandle) {
             }
         });
         if let Err(e) = result {
-            eprintln!("cooper: global keyboard listener unavailable ({e:?}); double-shift shortcuts disabled, fallback hotkeys still active");
+            eprintln!("clippy: global keyboard listener unavailable ({e:?}); double-shift shortcuts disabled, fallback hotkeys still active");
         }
     });
 }
 
 /// macOS 26 traps when rdev asks Carbon to translate a key into text from its
-/// event-tap thread. Cooper only needs physical shift keycodes, so use a small
+/// event-tap thread. Clippy only needs physical shift keycodes, so use a small
 /// keycode-only event tap and avoid the keyboard-layout APIs entirely.
 #[cfg(target_os = "macos")]
 pub fn start_double_shift_listener(app: AppHandle) {
@@ -205,7 +205,7 @@ mod macos_key_tap {
                             if let Err(error) =
                                 scheduler.run_on_main_thread(move || panel::toggle(&app))
                             {
-                                eprintln!("cooper: could not toggle panel: {error}");
+                                eprintln!("clippy: could not toggle panel: {error}");
                             }
                         }
                     }
@@ -250,7 +250,7 @@ mod macos_key_tap {
 
     pub fn start(app: AppHandle) {
         let _ = std::thread::Builder::new()
-            .name("cooper-key-listener".into())
+            .name("clippy-key-listener".into())
             .spawn(move || unsafe {
                 loop {
                     // An ad-hoc rebuild changes the app's code identity and can
@@ -281,7 +281,7 @@ mod macos_key_tap {
                     );
                     if tap.is_null() {
                         drop(Box::from_raw(state));
-                        eprintln!("cooper: global keyboard listener unavailable; retrying");
+                        eprintln!("clippy: global keyboard listener unavailable; retrying");
                         std::thread::sleep(Duration::from_secs(2));
                         continue;
                     }
@@ -291,7 +291,7 @@ mod macos_key_tap {
                         CFRelease(tap.cast_const());
                         drop(Box::from_raw(state));
                         eprintln!(
-                            "cooper: could not create the macOS keyboard event source; retrying"
+                            "clippy: could not create the macOS keyboard event source; retrying"
                         );
                         std::thread::sleep(Duration::from_secs(2));
                         continue;
@@ -358,14 +358,14 @@ pub fn register_fallback_shortcuts(app: &AppHandle) {
             panel::toggle(app);
         }
     }) {
-        eprintln!("cooper: could not register CmdOrCtrl+Shift+Space: {e}");
+        eprintln!("clippy: could not register CmdOrCtrl+Shift+Space: {e}");
     }
     if let Err(e) = gs.on_shortcut("CmdOrCtrl+Alt+C", |app, _shortcut, event| {
         if event.state() == ShortcutState::Released {
             capture_selection(app);
         }
     }) {
-        eprintln!("cooper: could not register CmdOrCtrl+Alt+C: {e}");
+        eprintln!("clippy: could not register CmdOrCtrl+Alt+C: {e}");
     }
 }
 
@@ -386,12 +386,12 @@ fn capture_selected_text(app: &AppHandle) -> Result<(), String> {
             return Ok(());
         }
         crate::macos::Selection::Protected => {
-            return Err("Cooper never captures text from secure fields".into())
+            return Err("Clippy never captures text from secure fields".into())
         }
         crate::macos::Selection::PermissionDenied => {
             panel::show(app);
             return Err(
-                "Allow Cooper in System Settings → Privacy & Security → Accessibility".into(),
+                "Allow Clippy in System Settings → Privacy & Security → Accessibility".into(),
             );
         }
         crate::macos::Selection::Unsupported => {}

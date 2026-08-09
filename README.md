@@ -1,60 +1,53 @@
-# Cooper — the open-source Copper app for Windows, macOS & Linux
+# Clippy — a polished capture companion for AI work
 
-[![Release](https://img.shields.io/github/v/release/TouchMyBar/cooper)](https://github.com/TouchMyBar/cooper/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/TouchMyBar/cooper/total)](https://github.com/TouchMyBar/cooper/releases)
+[![Release](https://img.shields.io/github/v/release/alexandrenf/clippy)](https://github.com/alexandrenf/clippy/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/alexandrenf/clippy/total)](https://github.com/alexandrenf/clippy/releases)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Build](https://github.com/TouchMyBar/cooper/actions/workflows/build.yml/badge.svg)](https://github.com/TouchMyBar/cooper/actions)
+[![Build](https://github.com/alexandrenf/clippy/actions/workflows/build.yml/badge.svg)](https://github.com/alexandrenf/clippy/actions)
 
-**Cooper** is a free, open-source recreation of **Copper** —
-the Mac capture app by **shadcn** — for people who want the same workflow on
-**Windows and Linux**, not just macOS. If you searched for a *Copper app for
-Windows*, a *Copper alternative*, or an *open-source Copper*, this is it.
+**Clippy** is a local, private capture panel for saving selected AI answers,
+links, notes, and follow-up prompts without leaving your current app. It keeps
+the useful parts of a to-do list, clipboard, and scratchpad one shortcut away.
 
-> Cooper is an independent community project. It is **not affiliated with or
-> endorsed by shadcn** — if you're on a Mac, go buy the original; it's great.
+> **Fork and credits:** Clippy is a fork of
+> [Cooper by TouchMyBar](https://github.com/TouchMyBar/cooper), an open-source
+> recreation inspired by shadcn's Copper app. Full credit goes to the Cooper
+> maintainers and contributors for the cross-platform foundation. This fork
+> keeps that workflow, adds macOS reliability and visual polish, and renames
+> the app to suit my preference. Clippy is not affiliated with Cooper's
+> maintainers, shadcn, Copper, or Microsoft.
 
-Copper's pitch, which Cooper replicates faithfully: the more you use AI, the
-more you collect little things you don't want to lose — an answer worth
-keeping, a link, an idea, three follow-up prompts while the current one is
-still generating. Cooper combines the useful parts of a **to-do list, a
-clipboard, and a scratchpad**, purpose-built for AI-assisted work. It sits
-next to where you work, is always one shortcut away, and works with all your
-AI apps, terminals, and browsers — ChatGPT, Claude, Cursor, anything.
-
-**Local and private.** No sync, no telemetry, no account. Everything lives in
-a single SQLite file on your machine.
+**Local and private.** No sync, telemetry, or account. Everything lives in a
+single SQLite file on your machine.
 
 <p align="center">
-  <img src="docs/screenshot-dark.png" width="330" alt="Cooper dark theme — empty state with capture shortcuts" />
-  <img src="docs/screenshot-glass.png" width="330" alt="Cooper glass theme — captured items with inline markdown formatting" />
+  <img src="docs/screenshot-dark.png" width="330" alt="Clippy dark theme — empty state with capture shortcuts" />
+  <img src="docs/screenshot-glass.png" width="330" alt="Clippy glass theme — captured items with inline markdown formatting" />
 </p>
 
 ## Download
 
-Grab the latest build from **[Releases](https://github.com/TouchMyBar/cooper/releases/latest)** —
-no compiling needed:
+Grab the latest build from **[Releases](https://github.com/alexandrenf/clippy/releases/latest)**:
 
 | OS | File to download |
 | --- | --- |
-| **Windows** | `Cooper_x.y.z_x64-setup.exe` (installer) or `Cooper_x.y.z_x64_en-US.msi` |
-| **macOS** (Intel & Apple Silicon) | `Cooper_x.y.z_universal.dmg` |
-| **Linux** | `Cooper_x.y.z_amd64.AppImage` (portable — `chmod +x` and run), or `.deb` / `.rpm` |
+| **Windows** | `Clippy_x.y.z_x64-setup.exe` or `Clippy_x.y.z_x64_en-US.msi` |
+| **macOS** (Intel & Apple Silicon) | `Clippy_x.y.z_universal.dmg` |
+| **Linux** | `Clippy_x.y.z_amd64.AppImage`, `.deb`, or `.rpm` |
 
 First-run notes:
 
-- **Windows**: SmartScreen may warn because the binary is unsigned — click
+- **Windows:** SmartScreen may warn because the binary is unsigned. Click
   *More info → Run anyway*.
-- **macOS**: unsigned app; right-click → *Open* the first time (or
-  `xattr -dr com.apple.quarantine /Applications/Cooper.app`). Grant
-  **Accessibility** permission for the double-shift capture.
-- **Linux**: the AppImage needs no install. On Wayland use the fallback
-  hotkeys (see below).
+- **macOS:** Right-click → *Open* the unsigned app the first time, or run
+  `xattr -dr com.apple.quarantine /Applications/Clippy.app`. Grant
+  **Accessibility** permission for double-shift capture.
+- **Linux:** The AppImage is portable. On Wayland, use the fallback hotkeys.
 
 ## How it works
 
 - Select text anywhere → **double-tap Left Shift** → captured.
-- Think of a follow-up prompt → **double-tap Right Shift** → Cooper appears,
-  type it, keep working.
+- Think of a follow-up prompt → **double-tap Right Shift** → Clippy appears.
 - Send items back into your AI apps and check them off as you go.
 
 ## Shortcuts
@@ -62,7 +55,7 @@ First-run notes:
 | Action | Shortcut |
 | --- | --- |
 | Capture selected text (any app) | `Left Shift` + `Left Shift` |
-| Show / hide Cooper (any app) | `Right Shift` + `Right Shift` |
+| Show / hide Clippy (any app) | `Right Shift` + `Right Shift` |
 | Show / hide (fallback) | `Ctrl/Cmd` + `Shift` + `Space` |
 | Capture (fallback) | `Ctrl/Cmd` + `Alt/Option` + `C` |
 | Switch / create section | `Ctrl/Cmd` + `K` |
@@ -72,64 +65,51 @@ First-run notes:
 
 ## Features
 
-- **Capture panel** — frameless, always-on-top, docked to the edge of your
-  screen, summoned and dismissed entirely from the keyboard.
-- **Sections** — type `# Name` to create one; everything you capture lands in
-  the active section until you switch (`Ctrl/Cmd+K`). Right-click a header to
-  rename, delete, or retarget captures.
-- **Inline formatting** — cards render `**bold**`, `*italic*`,
-  `~~strikethrough~~`, and `` `code` ``. (Underscore emphasis is intentionally
-  unsupported so captured snake_case and `__dunder__` code isn't mangled.)
-- **Copy as List** — multi-select items and copy them back out as a Markdown
-  list, ready to paste into a prompt.
-- **Themes** — System / Light / Dark / **Glass**. Glass is a translucent
-  liquid-glass look built on each OS's cheapest compositor effect: Windows DWM
-  acrylic, macOS `NSVisualEffectView` vibrancy (GPU-composited, effectively
-  free). Linux gets plain translucency; KWin or picom can blur it.
-- **Tray app** — closes to the tray, optional start-at-login, single-instance.
-- **Your data stays yours** — one SQLite file, plus one-click *Export to
-  Markdown* so nothing is ever locked in.
+- **Capture panel** — frameless, always on top, and summoned from the keyboard.
+- **Sections** — type `# Name` to create one and switch with `Ctrl/Cmd+K`.
+- **Inline formatting** — supports bold, italic, strikethrough, and code.
+- **Copy as List** — sends selected items back out as a Markdown list.
+- **Themes** — System, Light, Dark, and a translucent Glass theme.
+- **Tray app** — closes to the tray, supports start-at-login, and uses a
+  monochrome macOS template icon that adapts to the menu-bar appearance.
+- **Portable data** — one SQLite file plus one-click Markdown export.
 
 ## Building from source
 
 Prerequisites: [Rust](https://rustup.rs), Node 18+, and the
-[Tauri 2 platform prerequisites](https://tauri.app/start/prerequisites/)
-(WebView2 on Windows — preinstalled on Win 11; `libwebkit2gtk-4.1` etc. on
-Linux).
+[Tauri 2 platform prerequisites](https://tauri.app/start/prerequisites/).
 
 ```sh
 npm install
-npm run tauri dev      # run in development
-npm run tauri build    # produce installers/bundles for your OS
+npm run tauri dev
+npm run tauri build
 ```
 
-One Tauri 2 codebase (Rust core + web UI in the OS webview) compiles to a
-~10 MB native binary on every platform. No Electron.
+Clippy uses a Rust core and React UI in the operating system webview—no
+Electron.
 
 ## Platform notes
 
-- **macOS** — Cooper asks for Accessibility access on first run and links
-  directly to *System Settings → Privacy & Security → Accessibility* if setup
-  is incomplete. It reads the focused app's selected text through the native
-  Accessibility API first, without touching the clipboard.
-- **Linux** — the raw keyboard hook works on X11. Global shortcuts and tray
-  support vary by Wayland compositor, so test them in your desktop session;
-  the tray's *Capture clipboard* action remains available where a tray is shown.
-- **Capture mechanics** — on macOS, apps that do not expose selection through
-  Accessibility use a copy/pasteboard compatibility path. Cooper no longer
-  writes a detection sentinel, so an empty capture cannot erase clipboard
-  images, files, rich text, or custom data. A successful compatibility capture
-  leaves the selected text on the clipboard, just like pressing Copy.
+- **macOS:** Clippy reads the focused app's selected text through the native
+  Accessibility API first, without touching the clipboard. Apps that do not
+  expose selection use a copy/pasteboard compatibility path that preserves
+  non-text clipboard data when capture is empty.
+- **Linux:** The raw keyboard hook works on X11. Global shortcuts and tray
+  support vary by Wayland compositor; the tray's *Capture clipboard* action
+  remains available where a tray is shown.
 
 ## Data
 
-- Database: `cooper.db` in the app data directory
-  (`%APPDATA%/app.cooper.desktop` on Windows,
-  `~/Library/Application Support/app.cooper.desktop` on macOS,
-  `~/.local/share/app.cooper.desktop` on Linux).
-- `⋯ → Export to Markdown` writes a checklist-style `cooper-export.md` to
-  your Documents folder.
+- Database: `clippy.db` in the app data directory
+  (`%APPDATA%/app.clippy.desktop` on Windows,
+  `~/Library/Application Support/app.clippy.desktop` on macOS,
+  `~/.local/share/app.clippy.desktop` on Linux).
+- On first launch, Clippy copies an existing Cooper database into the new
+  location when possible, leaving the original untouched.
+- `⋯ → Export to Markdown` writes `clippy-export.md` to Documents.
 
-## License
+## License and upstream
 
-[Apache-2.0](LICENSE) — fork it, ship it, build on it.
+[Apache-2.0](LICENSE). Clippy preserves Cooper's license and contributor
+credit. For the original project, its history, and upstream releases, visit
+[TouchMyBar/cooper](https://github.com/TouchMyBar/cooper).

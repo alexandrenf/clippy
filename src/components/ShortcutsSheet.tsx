@@ -9,13 +9,13 @@ const GROUPS: { title: string; rows: [string, string[]][] }[] = [
     title: "Anywhere",
     rows: [
       ["Capture selected text", ["Left Shift", "Left Shift"]],
-      ["Show / hide Cooper", ["Right Shift", "Right Shift"]],
+      ["Show / hide Clippy", ["Right Shift", "Right Shift"]],
       ["Show / hide (fallback)", [`${MOD} Shift Space`]],
       ["Capture (fallback)", [IS_MAC ? `${MOD} ⌥ C` : `${MOD} Alt C`]],
     ],
   },
   {
-    title: "In Cooper",
+    title: "In Clippy",
     rows: [
       ["Switch section", [`${MOD} K`]],
       ["Search", [`${MOD} F`]],

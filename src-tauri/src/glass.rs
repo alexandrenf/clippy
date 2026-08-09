@@ -28,10 +28,10 @@ fn set_effect(window: &WebviewWindow, enable: bool) {
             (242, 242, 248, 120)
         };
         if let Err(e) = window_vibrancy::apply_acrylic(window, Some(tint)) {
-            eprintln!("cooper: acrylic unavailable: {e}");
+            eprintln!("clippy: acrylic unavailable: {e}");
         }
     } else if let Err(e) = window_vibrancy::clear_acrylic(window) {
-        eprintln!("cooper: clear acrylic failed: {e}");
+        eprintln!("clippy: clear acrylic failed: {e}");
     }
 }
 
@@ -45,10 +45,10 @@ fn set_effect(window: &WebviewWindow, enable: bool) {
             Some(NSVisualEffectState::FollowsWindowActiveState),
             Some(12.0),
         ) {
-            eprintln!("cooper: vibrancy unavailable: {e}");
+            eprintln!("clippy: vibrancy unavailable: {e}");
         }
     } else if let Err(e) = window_vibrancy::clear_vibrancy(window) {
-        eprintln!("cooper: clear vibrancy failed: {e}");
+        eprintln!("clippy: clear vibrancy failed: {e}");
     }
 }
 

@@ -245,7 +245,7 @@ pub fn export_markdown(app: AppHandle, db: State<db::Db>) -> CmdResult<String> {
     let state = db::get_state(&conn).map_err(err)?;
     drop(conn);
 
-    let mut md = String::from("# Cooper export\n\n");
+    let mut md = String::from("# Clippy export\n\n");
     let write_items = |md: &mut String, section_id: Option<i64>| {
         for item in state.items.iter().filter(|i| i.section_id == section_id) {
             let mark = if item.done { "x" } else { " " };
@@ -269,9 +269,9 @@ pub fn export_markdown(app: AppHandle, db: State<db::Db>) -> CmdResult<String> {
         .map_err(err)?;
     for suffix in 0..10_000 {
         let name = if suffix == 0 {
-            "cooper-export.md".to_string()
+            "clippy-export.md".to_string()
         } else {
-            format!("cooper-export-{suffix}.md")
+            format!("clippy-export-{suffix}.md")
         };
         let path = dir.join(name);
         match std::fs::OpenOptions::new()
@@ -288,7 +288,7 @@ pub fn export_markdown(app: AppHandle, db: State<db::Db>) -> CmdResult<String> {
             Err(e) => return Err(err(e)),
         }
     }
-    Err("Too many Cooper exports in Documents".into())
+    Err("Too many Clippy exports in Documents".into())
 }
 
 #[tauri::command]
@@ -313,7 +313,7 @@ pub fn open_editor(app: AppHandle, db: State<db::Db>, id: i64) -> CmdResult<()> 
         &label,
         tauri::WebviewUrl::App(format!("index.html#/edit/{id}").into()),
     )
-    .title("Edit — Cooper")
+    .title("Edit — Clippy")
     .inner_size(460.0, 360.0)
     .min_inner_size(320.0, 240.0)
     .decorations(false)

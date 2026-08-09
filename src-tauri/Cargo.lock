@@ -549,6 +549,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "clippy"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "enigo",
+ "objc2-app-kit",
+ "rdev",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-single-instance",
+ "window-vibrancy",
+]
+
+[[package]]
 name = "cocoa"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -590,25 +609,6 @@ checksum = "4ddef33a339a91ea89fb53151bd0a4689cfce27055c291dfa69945475d22c747"
 dependencies = [
  "time",
  "version_check",
-]
-
-[[package]]
-name = "cooper"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "enigo",
- "objc2-app-kit",
- "rdev",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-single-instance",
- "window-vibrancy",
 ]
 
 [[package]]
