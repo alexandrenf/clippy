@@ -13,6 +13,7 @@ interface Props {
   onSelect: (id: number | null) => void;
   onCreate: (name: string) => void;
   onClose: () => void;
+  mode?: "switch" | "move";
 }
 
 export default function SectionSwitcher({
@@ -21,6 +22,7 @@ export default function SectionSwitcher({
   onSelect,
   onCreate,
   onClose,
+  mode = "switch",
 }: Props) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
@@ -35,7 +37,7 @@ export default function SectionSwitcher({
       ...sections.map((s) => ({ id: s.id, label: s.name })),
     ].filter((r) => !q || r.label.toLowerCase().includes(q));
     if (q && !sections.some((s) => s.name.toLowerCase() === q)) {
-      list.push({ id: -1, label: `Create section “${query.trim()}”`, create: true });
+      list.push({ id: -1, label: `Create list “${query.trim()}”`, create: true });
     }
     return list;
   }, [query, sections]);
@@ -56,14 +58,14 @@ export default function SectionSwitcher({
         className="switcher"
         role="dialog"
         aria-modal="true"
-        aria-label="Switch or create a section"
+        aria-label={mode === "move" ? "Move prompts to a list" : "Switch or create a list"}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <input
           ref={inputRef}
           className="switcher-input"
-          aria-label="Find a section"
-          placeholder="Switch or create a section…"
+          aria-label="Find a list"
+          placeholder={mode === "move" ? "Move to a list…" : "Switch or create a list…"}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -85,7 +87,7 @@ export default function SectionSwitcher({
             }
           }}
         />
-        <div className="switcher-list" role="listbox" aria-label="Sections">
+        <div className="switcher-list" role="listbox" aria-label="Lists">
           {rows.map((row, i) => (
             <button
               key={`${row.id}-${row.label}`}
@@ -101,11 +103,17 @@ export default function SectionSwitcher({
               )}
             </button>
           ))}
-          {rows.length === 0 && <div className="switcher-empty">No sections</div>}
+          {rows.length === 0 && <div className="switcher-empty">No lists</div>}
         </div>
         <div className="switcher-hint">
-          Capture and new notes go to the selected section · Type <b># Name</b> in the
-          input to create one inline
+          {mode === "move" ? (
+            <>Choose a destination or type a name to create one</>
+          ) : (
+            <>
+              New prompts go to the selected list · Type <b>## Title</b> in the composer to
+              create one inline
+            </>
+          )}
         </div>
       </div>
     </div>

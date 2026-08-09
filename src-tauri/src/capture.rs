@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -8,6 +9,8 @@ use crate::{db, panel};
 const TAP_WINDOW: Duration = Duration::from_millis(400);
 const HOLD_LIMIT: Duration = Duration::from_millis(500);
 const COPY_DEADLINE: Duration = Duration::from_millis(450);
+pub const DEFAULT_SHOW_SHORTCUT: &str = "CmdOrCtrl+Shift+Space";
+pub const DEFAULT_CAPTURE_SHORTCUT: &str = "CmdOrCtrl+Alt+C";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Side {
@@ -347,26 +350,79 @@ mod macos_key_tap {
     }
 }
 
-/// Standard hotkeys remain available when the raw modifier listener is denied.
-/// Capture on release so the synthetic fallback never races held modifiers.
-pub fn register_fallback_shortcuts(app: &AppHandle) {
+fn register_show_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-    let gs = app.global_shortcut();
-    if let Err(e) = gs.on_shortcut("CmdOrCtrl+Shift+Space", |app, _shortcut, event| {
-        if event.state() == ShortcutState::Released {
-            panel::toggle(app);
-        }
-    }) {
-        eprintln!("clippy: could not register CmdOrCtrl+Shift+Space: {e}");
+    app.global_shortcut()
+        .on_shortcut(shortcut, |app, _shortcut, event| {
+            if event.state() == ShortcutState::Released {
+                panel::toggle(app);
+            }
+        })
+        .map_err(|error| error.to_string())
+}
+
+fn register_capture_shortcut(app: &AppHandle, shortcut: &str) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+    app.global_shortcut()
+        .on_shortcut(shortcut, |app, _shortcut, event| {
+            if event.state() == ShortcutState::Released {
+                capture_selection(app);
+            }
+        })
+        .map_err(|error| error.to_string())
+}
+
+pub fn validate_fallback_shortcuts(show: &str, capture: &str) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::Shortcut;
+
+    let show = Shortcut::from_str(show.trim())
+        .map_err(|_| "The Show Clippy shortcut is not valid".to_string())?;
+    let capture = Shortcut::from_str(capture.trim())
+        .map_err(|_| "The Capture shortcut is not valid".to_string())?;
+    if show.id() == capture.id() {
+        return Err("Show Clippy and Capture must use different shortcuts".into());
     }
-    if let Err(e) = gs.on_shortcut("CmdOrCtrl+Alt+C", |app, _shortcut, event| {
-        if event.state() == ShortcutState::Released {
-            capture_selection(app);
-        }
-    }) {
-        eprintln!("clippy: could not register CmdOrCtrl+Alt+C: {e}");
+    Ok(())
+}
+
+/// Standard hotkeys remain available when the raw modifier listener is denied.
+/// Capture on release so the synthetic fallback never races held modifiers.
+pub fn register_fallback_shortcuts(
+    app: &AppHandle,
+    show: &str,
+    capture: &str,
+) -> Result<(), String> {
+    validate_fallback_shortcuts(show, capture)?;
+    register_show_shortcut(app, show)?;
+    if let Err(error) = register_capture_shortcut(app, capture) {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let _ = app.global_shortcut().unregister(show);
+        return Err(error);
     }
+    Ok(())
+}
+
+pub fn replace_fallback_shortcuts(
+    app: &AppHandle,
+    old_show: &str,
+    old_capture: &str,
+    new_show: &str,
+    new_capture: &str,
+) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    validate_fallback_shortcuts(new_show, new_capture)?;
+    let shortcuts = app.global_shortcut();
+    let _ = shortcuts.unregister(old_show);
+    let _ = shortcuts.unregister(old_capture);
+
+    if let Err(error) = register_fallback_shortcuts(app, new_show, new_capture) {
+        let _ = register_fallback_shortcuts(app, old_show, old_capture);
+        return Err(format!("Couldn’t register those shortcuts: {error}"));
+    }
+    Ok(())
 }
 
 pub fn capture_selection(_app: &AppHandle) {
@@ -377,19 +433,41 @@ pub fn capture_clipboard(_app: &AppHandle) {
     enqueue(CaptureRequest::Clipboard);
 }
 
+#[cfg(test)]
+mod shortcut_tests {
+    use super::*;
+
+    #[test]
+    fn validates_default_shortcuts_and_rejects_duplicates() {
+        assert!(
+            validate_fallback_shortcuts(DEFAULT_SHOW_SHORTCUT, DEFAULT_CAPTURE_SHORTCUT).is_ok()
+        );
+        assert!(validate_fallback_shortcuts(DEFAULT_SHOW_SHORTCUT, DEFAULT_SHOW_SHORTCUT).is_err());
+        assert!(validate_fallback_shortcuts("not a shortcut", DEFAULT_CAPTURE_SHORTCUT).is_err());
+    }
+
+    #[test]
+    fn capture_preview_is_compact_and_unicode_safe() {
+        assert_eq!(capture_preview("  hello\n   world  "), "hello world");
+        let long = "🧠".repeat(100);
+        let preview = capture_preview(&long);
+        assert_eq!(preview.chars().count(), 93);
+        assert!(preview.ends_with('…'));
+    }
+}
+
 fn capture_selected_text(app: &AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     match crate::macos::selected_text() {
         crate::macos::Selection::Text(text) => return add_text_item(app, &text),
         crate::macos::Selection::Empty => {
-            let _ = app.emit("capture-empty", ());
+            notify_empty(app);
             return Ok(());
         }
         crate::macos::Selection::Protected => {
             return Err("Clippy never captures text from secure fields".into())
         }
         crate::macos::Selection::PermissionDenied => {
-            panel::show(app);
             return Err(
                 "Allow Clippy in System Settings → Privacy & Security → Accessibility".into(),
             );
@@ -448,13 +526,13 @@ fn capture_via_copy(app: &AppHandle) -> Result<(), String> {
         delay = (delay * 2).min(Duration::from_millis(25));
     }
 
-    let _ = app.emit("capture-empty", ());
+    notify_empty(app);
     Ok(())
 }
 
 fn add_text_item(app: &AppHandle, text: &str) -> Result<(), String> {
     if !text.chars().any(|c| !c.is_whitespace()) {
-        let _ = app.emit("capture-empty", ());
+        notify_empty(app);
         return Ok(());
     }
     if text.chars().count() > db::MAX_ITEM_CHARS {
@@ -471,17 +549,34 @@ fn add_text_item(app: &AppHandle, text: &str) -> Result<(), String> {
     {
         drop(conn);
         let _ = app.emit("capture-duplicate", ());
+        panel::capture_feedback(app, "duplicate", capture_preview(text));
         return Ok(());
     }
     db::insert_item(&conn, text, active).map_err(|e| e.to_string())?;
     drop(conn);
     let _ = app.emit("refresh", ());
     let _ = app.emit("captured", ());
+    panel::capture_feedback(app, "captured", capture_preview(text));
     Ok(())
 }
 
 fn notify_error(app: &AppHandle, message: &str) {
     let _ = app.emit("capture-error", message);
+    panel::capture_feedback(app, "error", message);
+}
+
+fn notify_empty(app: &AppHandle) {
+    let _ = app.emit("capture-empty", ());
+    panel::capture_feedback(app, "empty", "Clippy left everything untouched");
+}
+
+fn capture_preview(text: &str) -> String {
+    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut preview = compact.chars().take(92).collect::<String>();
+    if compact.chars().count() > 92 {
+        preview.push('…');
+    }
+    preview
 }
 
 fn send_copy() -> Result<(), String> {

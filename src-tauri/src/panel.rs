@@ -1,4 +1,16 @@
+use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow};
+
+static FEEDBACK_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CaptureFeedbackPayload {
+    kind: String,
+    preview: String,
+}
 
 /// Dock to the usable right edge of the screen under the pointer. This makes
 /// the global shortcut follow the active display and avoids the menu bar/Dock.
@@ -55,4 +67,60 @@ pub fn toggle(app: &AppHandle) {
             show(app);
         }
     }
+}
+
+fn position_capture_feedback(win: &WebviewWindow) {
+    let monitor = win
+        .cursor_position()
+        .ok()
+        .and_then(|point| win.monitor_from_point(point.x, point.y).ok().flatten())
+        .or_else(|| win.current_monitor().ok().flatten())
+        .or_else(|| win.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        return;
+    };
+    let work = monitor.work_area();
+    let Ok(size) = win.outer_size() else {
+        return;
+    };
+    let x = work.position.x + (work.size.width as i32 - size.width as i32) / 2;
+    let y = work.position.y + (24.0 * monitor.scale_factor()) as i32;
+    let _ = win.set_position(PhysicalPosition::new(x, y));
+}
+
+pub fn capture_feedback(app: &AppHandle, kind: &str, preview: impl Into<String>) {
+    if app
+        .get_webview_window("main")
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let Some(window) = app.get_webview_window("capture-toast") else {
+        return;
+    };
+
+    let generation = FEEDBACK_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    position_capture_feedback(&window);
+    let _ = window.set_focusable(false);
+    let _ = window.set_ignore_cursor_events(true);
+    let _ = window.show();
+    let _ = app.emit_to(
+        "capture-toast",
+        "capture-feedback",
+        CaptureFeedbackPayload {
+            kind: kind.into(),
+            preview: preview.into(),
+        },
+    );
+
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(2_050));
+        if FEEDBACK_GENERATION.load(Ordering::Relaxed) == generation {
+            if let Some(window) = app.get_webview_window("capture-toast") {
+                let _ = window.hide();
+            }
+        }
+    });
 }

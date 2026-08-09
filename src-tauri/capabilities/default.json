@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability for Clippy windows",
-  "windows": ["main", "editor-*"],
+  "windows": ["main", "editor-*", "capture-toast"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -12,6 +12,8 @@
     "core:window:allow-set-position",
     "core:window:allow-set-size",
     "core:window:allow-close",
-    "core:webview:allow-set-webview-focus"
+    "core:webview:allow-set-webview-focus",
+    "dialog:allow-open",
+    "drag:default"
   ]
 }

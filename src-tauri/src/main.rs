@@ -10,7 +10,7 @@ mod panel;
 mod tray;
 
 use std::{path::Path, sync::Mutex, time::Duration};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 fn migrate_legacy_database(data_dir: &Path) -> rusqlite::Result<()> {
     let target = data_dir.join("clippy.db");
@@ -43,20 +43,33 @@ fn main() {
             Some(vec!["--hidden"]),
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_drag::init())
         .invoke_handler(tauri::generate_handler![
             commands::get_state,
+            commands::set_shortcuts,
             commands::add_entry,
+            commands::inspect_attachments,
+            commands::paste_clipboard_image,
+            commands::discard_pasted_image,
+            commands::get_attachment_preview,
+            commands::open_attachment,
             commands::set_items_done,
             commands::update_item,
             commands::delete_items,
+            commands::merge_items,
+            commands::move_items,
             commands::clear_completed,
             commands::set_active_section,
             commands::create_section,
             commands::rename_section,
             commands::delete_section,
             commands::set_theme,
+            commands::set_keep_on_top,
             commands::copy_text,
             commands::export_markdown,
+            commands::reveal_notes,
+            commands::check_for_updates,
             commands::capture_now,
             commands::hide_panel,
             commands::open_editor,
@@ -68,23 +81,36 @@ fn main() {
             let launch_hidden = std::env::args_os().any(|arg| arg == "--hidden");
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            commands::clear_paste_drafts(app.handle());
             if let Err(error) = migrate_legacy_database(&data_dir) {
                 let _ = std::fs::remove_file(data_dir.join("clippy.db"));
                 eprintln!("clippy: could not import the Cooper database: {error}");
             }
             let conn = db::init(&data_dir.join("clippy.db"))?;
             let glass_on = db::get_setting(&conn, "theme").as_deref() == Some("glass");
+            let keep_on_top = db::get_setting(&conn, "keep_on_top").as_deref() != Some("false");
+            let show_shortcut = db::get_setting(&conn, "show_shortcut")
+                .unwrap_or_else(|| capture::DEFAULT_SHOW_SHORTCUT.into());
+            let capture_shortcut = db::get_setting(&conn, "capture_shortcut")
+                .unwrap_or_else(|| capture::DEFAULT_CAPTURE_SHORTCUT.into());
             app.manage(db::Db(Mutex::new(conn)));
 
             #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            app.set_activation_policy(tauri::ActivationPolicy::Regular);
 
             tray::create(app.handle())?;
             capture::start_capture_worker(app.handle().clone());
-            capture::register_fallback_shortcuts(app.handle());
+            if let Err(error) = capture::register_fallback_shortcuts(
+                app.handle(),
+                &show_shortcut,
+                &capture_shortcut,
+            ) {
+                eprintln!("clippy: could not register fallback shortcuts: {error}");
+            }
             capture::start_double_shift_listener(app.handle().clone());
 
             if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_always_on_top(keep_on_top);
                 panel::position(&win);
                 if glass_on {
                     glass::apply(&win, true);
@@ -95,6 +121,35 @@ fn main() {
                 }
             }
             Ok(())
+        })
+        .on_webview_event(|webview, event| {
+            #[cfg(target_os = "macos")]
+            if webview.label() == "main" {
+                if let tauri::WebviewEvent::DragDrop(drag) = event {
+                    match drag {
+                        tauri::DragDropEvent::Enter { paths, .. } => {
+                            let kind = if paths.is_empty() && macos::dragged_text().is_some() {
+                                "text"
+                            } else {
+                                "files"
+                            };
+                            let _ = webview.emit("native-drag-kind", kind);
+                        }
+                        tauri::DragDropEvent::Drop { paths, .. } => {
+                            if paths.is_empty() {
+                                if let Some(text) = macos::dragged_text() {
+                                    let _ = webview.emit("text-dropped", text);
+                                }
+                            }
+                            let _ = webview.emit("native-drag-kind", "none");
+                        }
+                        tauri::DragDropEvent::Leave => {
+                            let _ = webview.emit("native-drag-kind", "none");
+                        }
+                        _ => {}
+                    }
+                }
+            }
         })
         .on_window_event(|window, event| {
             // Closing the panel hides it; the app lives in the tray.

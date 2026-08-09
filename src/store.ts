@@ -1,7 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppState, Theme } from "./types";
+import type { AppState, AttachmentDraft, Theme } from "./types";
 
 function messageFrom(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -9,19 +9,59 @@ function messageFrom(error: unknown) {
 
 export const api = {
   getState: () => invoke<AppState>("get_state"),
-  addEntry: (content: string) => invoke<void>("add_entry", { content }),
+  addEntry: (content: string, attachmentPaths: string[] = []) =>
+    invoke<void>("add_entry", { content, attachmentPaths }),
+  inspectAttachments: (paths: string[]) =>
+    invoke<AttachmentDraft[]>("inspect_attachments", { paths }),
+  pasteClipboardImage: () => invoke<AttachmentDraft>("paste_clipboard_image"),
+  discardPastedImage: (path: string) =>
+    invoke<void>("discard_pasted_image", { path }),
+  getAttachmentPreview: (id: number) =>
+    invoke<string | null>("get_attachment_preview", { id }),
+  openAttachment: (id: number) => invoke<void>("open_attachment", { id }),
+  startFileDrag: (paths: string[], image: string) => {
+    const onEvent = new Channel<{ result: string; cursorPos: { x: number; y: number } }>();
+    return invoke<void>("plugin:drag|start_drag", {
+      item: paths,
+      image,
+      options: { mode: "copy" },
+      onEvent,
+    });
+  },
+  startTextDrag: (text: string, image: string) => {
+    const onEvent = new Channel<{ result: string; cursorPos: { x: number; y: number } }>();
+    return invoke<void>("plugin:drag|start_drag", {
+      item: {
+        data: text,
+        types: ["public.utf8-plain-text", "text/plain", "UTF8_STRING"],
+      },
+      image,
+      options: { mode: "copy" },
+      onEvent,
+    });
+  },
   setItemsDone: (ids: number[], done: boolean) =>
     invoke<void>("set_items_done", { ids, done }),
   updateItem: (id: number, content: string) => invoke<void>("update_item", { id, content }),
   deleteItems: (ids: number[]) => invoke<void>("delete_items", { ids }),
+  mergeItems: (ids: number[]) => invoke<void>("merge_items", { ids }),
+  moveItems: (ids: number[], sectionId: number | null) =>
+    invoke<void>("move_items", { ids, sectionId }),
   clearCompleted: () => invoke<void>("clear_completed"),
   setActiveSection: (id: number | null) => invoke<void>("set_active_section", { id }),
   createSection: (name: string) => invoke<number>("create_section", { name }),
   renameSection: (id: number, name: string) => invoke<void>("rename_section", { id, name }),
-  deleteSection: (id: number) => invoke<void>("delete_section", { id }),
+  deleteSection: (id: number, deleteItems = false) =>
+    invoke<void>("delete_section", { id, deleteItems }),
   setTheme: (theme: Theme) => invoke<void>("set_theme", { theme }),
-  copyText: (text: string) => invoke<void>("copy_text", { text }),
+  setKeepOnTop: (enabled: boolean) => invoke<void>("set_keep_on_top", { enabled }),
+  setShortcuts: (showShortcut: string, captureShortcut: string) =>
+    invoke<void>("set_shortcuts", { showShortcut, captureShortcut }),
+  copyText: (text: string, paths: string[] = []) =>
+    invoke<void>("copy_text", { text, paths }),
   exportMarkdown: () => invoke<string>("export_markdown"),
+  revealNotes: () => invoke<void>("reveal_notes"),
+  checkForUpdates: () => invoke<void>("check_for_updates"),
   captureNow: () => invoke<void>("capture_now"),
   hidePanel: () => invoke<void>("hide_panel"),
   openEditor: (id: number) => invoke<void>("open_editor", { id }),

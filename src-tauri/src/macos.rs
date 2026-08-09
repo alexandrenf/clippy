@@ -1,8 +1,13 @@
 //! Small, focused wrappers around macOS Accessibility and pasteboard APIs.
 //! The Accessibility path reads a selection without touching the clipboard.
 
-use objc2_app_kit::NSPasteboard;
+use objc2::runtime::ProtocolObject;
+use objc2_app_kit::{
+    NSPasteboard, NSPasteboardNameDrag, NSPasteboardTypeString, NSPasteboardWriting,
+};
+use objc2_foundation::{NSArray, NSString, NSURL};
 use std::ffi::{c_char, c_void, CStr};
+use std::path::PathBuf;
 use std::ptr;
 
 type AXUIElementRef = *const c_void;
@@ -211,4 +216,47 @@ pub fn request_accessibility_permission() -> bool {
 
 pub fn pasteboard_generation() -> i64 {
     NSPasteboard::generalPasteboard().changeCount() as i64
+}
+
+/// Read plain text from the active native drag session. WebKit's file-drop
+/// bridge consumes macOS drag events before DOM text drop handlers see them.
+pub fn dragged_text() -> Option<String> {
+    unsafe {
+        NSPasteboard::pasteboardWithName(NSPasteboardNameDrag)
+            .stringForType(NSPasteboardTypeString)
+            .map(|value| value.to_string())
+            .filter(|value| !value.trim().is_empty())
+    }
+}
+
+/// Put prompt text and its local file attachments on the same macOS
+/// pasteboard. Apps that accept uploads receive the files while plain text
+/// fields still receive the prompt.
+pub fn copy_text_and_files(text: &str, paths: &[PathBuf]) -> Result<(), String> {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let mut objects = Vec::with_capacity(paths.len() + 1);
+    objects.push(ProtocolObject::<dyn NSPasteboardWriting>::from_retained(
+        NSString::from_str(text),
+    ));
+
+    for path in paths {
+        let path = path
+            .canonicalize()
+            .map_err(|error| format!("Couldn’t copy attachment: {error}"))?;
+        let path = path
+            .to_str()
+            .ok_or_else(|| "An attachment path cannot be copied".to_string())?;
+        let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+        objects.push(ProtocolObject::<dyn NSPasteboardWriting>::from_retained(
+            url,
+        ));
+    }
+
+    let objects = NSArray::from_retained_slice(&objects);
+    pasteboard.clearContents();
+    if pasteboard.writeObjects(&objects) {
+        Ok(())
+    } else {
+        Err("The clipboard did not accept these attachments".into())
+    }
 }

@@ -58,7 +58,7 @@ First-run notes:
 | Show / hide Clippy (any app) | `Right Shift` + `Right Shift` |
 | Show / hide (fallback) | `Ctrl/Cmd` + `Shift` + `Space` |
 | Capture (fallback) | `Ctrl/Cmd` + `Alt/Option` + `C` |
-| Switch / create section | `Ctrl/Cmd` + `K` |
+| Switch / create list | `Ctrl/Cmd` + `K` |
 | Copy selected · Copy as list | `Ctrl/Cmd` + `C` · `Ctrl/Cmd` + `Shift` + `C` |
 | Mark as done / Edit / Delete | `Space` / `Enter` / `Del` |
 | Shortcut sheet | `Ctrl/Cmd` + `/` |
@@ -66,9 +66,26 @@ First-run notes:
 ## Features
 
 - **Capture panel** — frameless, always on top, and summoned from the keyboard.
-- **Sections** — type `# Name` to create one and switch with `Ctrl/Cmd+K`.
+- **Lists** — type `## Title` to group prompts, switch with `Ctrl/Cmd+K`, and use
+  each list's `•••` menu to rename it, move its prompts to Inbox, or delete it.
+- **File attachments** — drag files onto the composer or use `+`; Clippy keeps a
+  private local copy with the prompt. Paste copied images directly into the
+  composer, drag selected text into the same box, then copy or drag prompts and
+  files back into another app.
+- **Mixed selection** — select prompts and individual images together with
+  `Cmd`-click, extend a range with `Shift`-click, or select the visible list with
+  `Cmd+A` before copying or dragging it elsewhere.
+- **Settled prompts** — completed work collapses into a compact block at the
+  bottom. Clear Settled follows the current scope: Inbox, one list, or All.
+- **Quiet capture feedback** — Double Shift shows a brief click-through preview
+  when the panel is closed, without taking focus from the app you're using.
+- **Local-only** — no registration or account is required; prompts and attachment
+  copies stay on the Mac.
+- **Custom shortcuts** — record your preferred global Show and Capture hotkeys
+  in Settings; Double Shift capture stays available.
 - **Inline formatting** — supports bold, italic, strikethrough, and code.
-- **Copy as List** — sends selected items back out as a Markdown list.
+- **Copy as List** — sends selected items and their attached files back out as a
+  numbered prompt list.
 - **Themes** — System, Light, Dark, and a translucent Glass theme.
 - **Tray app** — closes to the tray, supports start-at-login, and uses a
   monochrome macOS template icon that adapts to the menu-bar appearance.

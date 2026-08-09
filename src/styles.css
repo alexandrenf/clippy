@@ -2,37 +2,37 @@
 :root {
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI",
     Roboto, "Helvetica Neue", Arial, sans-serif;
-  --radius-panel: 16px;
-  --radius-card: 10px;
+  --radius-panel: 20px;
+  --radius-card: 13px;
 
-  --bg: rgba(246, 246, 248, 0.97);
-  --bg-solid: #f6f6f8;
-  --card: rgba(255, 255, 255, 0.86);
-  --card-hover: rgba(255, 255, 255, 0.96);
-  --text: #1d1d1f;
-  --muted: #737378;
-  --faint: rgba(0, 0, 0, 0.055);
-  --hairline: rgba(0, 0, 0, 0.1);
-  --accent: #007aff;
-  --accent-soft: rgba(0, 122, 255, 0.11);
+  --bg: rgba(220, 224, 223, 0.95);
+  --bg-solid: #dce0df;
+  --card: rgba(252, 252, 250, 0.96);
+  --card-hover: #ffffff;
+  --text: #20211f;
+  --muted: #747874;
+  --faint: rgba(31, 35, 32, 0.065);
+  --hairline: rgba(31, 35, 32, 0.11);
+  --accent: #3387e8;
+  --accent-soft: rgba(51, 135, 232, 0.12);
   --danger: #d70015;
-  --shadow-card: 0 0.5px 0.5px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.045);
+  --shadow-card: 0 1px 2px rgba(39, 48, 43, 0.08), 0 0 0 0.5px rgba(32, 38, 35, 0.045);
   /* Native transparent windows clip CSS shadows at their rectangular bounds. */
   --shadow-panel: none;
   --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
 }
 
 :root[data-theme="dark"] {
-  --bg: rgba(28, 28, 30, 0.97);
-  --bg-solid: #1c1c1e;
-  --card: rgba(52, 52, 56, 0.88);
-  --card-hover: rgba(60, 60, 64, 0.96);
+  --bg: rgba(31, 34, 33, 0.97);
+  --bg-solid: #1f2221;
+  --card: rgba(52, 56, 54, 0.94);
+  --card-hover: rgba(61, 66, 63, 0.98);
   --text: #f5f5f7;
   --muted: #a1a1a7;
   --faint: rgba(255, 255, 255, 0.07);
   --hairline: rgba(255, 255, 255, 0.1);
-  --accent: #0a84ff;
-  --accent-soft: rgba(10, 132, 255, 0.18);
+  --accent: #61a6f4;
+  --accent-soft: rgba(97, 166, 244, 0.18);
   --danger: #ff453a;
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(255, 255, 255, 0.04);
   --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
@@ -44,11 +44,11 @@
    translucent surfaces sit directly on the blurred backdrop. On Linux this is
    plain translucency (compositors like KWin/picom can blur it if configured). */
 :root[data-glass="1"] {
-  --radius-panel: 12px;
-  --bg: rgba(252, 252, 255, 0.4);
-  --bg-solid: #f4f4f7;
-  --card: rgba(255, 255, 255, 0.52);
-  --card-hover: rgba(255, 255, 255, 0.68);
+  --radius-panel: 18px;
+  --bg: rgba(220, 224, 223, 0.46);
+  --bg-solid: #dce0df;
+  --card: rgba(255, 255, 252, 0.68);
+  --card-hover: rgba(255, 255, 253, 0.82);
   --faint: rgba(120, 120, 140, 0.14);
   --hairline: rgba(100, 100, 120, 0.18);
   --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.07);
@@ -103,10 +103,109 @@ body {
   font-family: var(--font);
   font-size: 13px;
   color: var(--text);
-  padding: 8px; /* room for the panel's drop shadow inside the transparent window */
+  padding: 8px; /* room for the panel's rounded native window edges */
   -webkit-font-smoothing: antialiased;
   user-select: none;
   cursor: default;
+}
+
+body.capture-feedback-surface {
+  padding: 9px;
+  pointer-events: none;
+}
+
+body.capture-feedback-surface #root {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.capture-feedback {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  padding: 12px 15px;
+  overflow: hidden;
+  border: 0.5px solid color-mix(in srgb, var(--hairline) 68%, transparent);
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: 0 2px 6px rgba(38, 47, 42, 0.08),
+    0 1px 2px rgba(38, 47, 42, 0.04);
+  animation: capture-feedback-in 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+.capture-feedback.exiting {
+  animation: capture-feedback-out 180ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.capture-feedback-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.capture-feedback-heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.capture-feedback-heading strong,
+.capture-feedback-copy > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.capture-feedback-heading strong {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.capture-feedback[data-kind="error"] .capture-feedback-heading strong {
+  color: var(--danger);
+}
+
+.capture-feedback-copy > span:last-child {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.capture-feedback-countdown {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.62;
+  animation: capture-feedback-count 180ms ease-out both;
+}
+
+@keyframes capture-feedback-in {
+  from {
+    opacity: 0;
+    transform: translateY(-7px) scale(0.975);
+  }
+}
+
+@keyframes capture-feedback-out {
+  to {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.99);
+  }
+}
+
+@keyframes capture-feedback-count {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
 }
 
 input,
@@ -159,6 +258,47 @@ kbd {
   box-shadow: var(--shadow-panel);
   border: 0.5px solid var(--hairline);
   overflow: hidden;
+  isolation: isolate;
+}
+
+/* Entrance pop each time the panel is summoned (panel-shown). The reveal
+   state alternates between two identical keyframe names so a repeated
+   show/hide restarts the animation — the class stays applied between shows,
+   so a single name would only play once. Only transform/opacity, and the
+   prefers-reduced-motion block below collapses it to an instant appear. */
+.panel[data-reveal="odd"] {
+  animation: panel-in-odd 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.panel[data-reveal="even"] {
+  animation: panel-in-even 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes panel-in-odd {
+  0% {
+    opacity: 0;
+    transform: scale(0.94) translateY(12px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.012) translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes panel-in-even {
+  0% {
+    opacity: 0;
+    transform: scale(0.94) translateY(12px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.012) translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* ============ top bar ============ */
@@ -166,7 +306,7 @@ kbd {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 10px 7px;
+  padding: 12px 12px 8px;
   flex-shrink: 0;
 }
 
@@ -176,10 +316,17 @@ kbd {
   align-items: center;
   gap: 7px;
   min-height: 30px;
-  padding: 6px 9px;
-  border-radius: 8px;
-  background: var(--faint);
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--card);
   color: var(--muted);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 160ms ease, background 160ms ease;
+}
+
+.search:focus-within {
+  background: var(--card-hover);
+  box-shadow: var(--shadow-card), 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .search input {
@@ -199,14 +346,15 @@ kbd {
   width: 28px;
   height: 28px;
   padding: 0;
-  border-radius: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--card) 82%, transparent);
   color: var(--muted);
   font-size: 14px;
   line-height: 1;
 }
 
 .icon-btn:hover {
-  background: var(--faint);
+  background: var(--card-hover);
   color: var(--text);
 }
 
@@ -272,7 +420,7 @@ kbd {
 .list {
   flex: 1;
   overflow-y: auto;
-  padding: 3px 10px 8px;
+  padding: 4px 12px 10px;
   scroll-padding-block: 8px;
 }
 
@@ -286,37 +434,62 @@ kbd {
 }
 
 .group {
-  margin-bottom: 4px;
+  margin-bottom: 7px;
 }
 
 .group-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 4px 6px;
+  padding: 11px 3px 7px;
+}
+
+.group-actions {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin: -6px -3px -6px 0;
+  border-radius: 7px;
+  color: var(--muted);
+  opacity: 0.66;
+  transition: opacity 150ms ease, background 150ms ease, color 150ms ease,
+    transform 100ms ease;
+}
+
+.group-header:hover .group-actions,
+.group-actions:focus-visible {
+  opacity: 1;
+}
+
+.group-actions:hover {
+  background: var(--faint);
+  color: var(--text);
+}
+
+.group-actions:active {
+  transform: scale(0.92);
+}
+
+.group-actions span {
+  position: relative;
+  top: -2px;
+  font-size: 11.5px;
+  letter-spacing: 1px;
 }
 
 .group-name {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
   display: inline-flex;
   align-items: center;
   gap: 5px;
   white-space: nowrap;
-}
-
-.group-name.active {
-  color: var(--accent);
-}
-
-.active-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--accent);
 }
 
 .group-rule {
@@ -349,37 +522,191 @@ kbd {
   display: flex;
   align-items: flex-start;
   gap: 9px;
-  padding: 9px 10px;
-  margin: 2px 0;
+  padding: 10px 11px;
+  margin: 5px 0;
   border-radius: var(--radius-card);
-  background: transparent;
-  border: 0.5px solid transparent;
-  box-shadow: none;
-  transition: background 0.1s ease, border-color 0.1s ease;
+  background: var(--card);
+  border: 0.5px solid color-mix(in srgb, var(--hairline) 72%, transparent);
+  box-shadow: var(--shadow-card);
+  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1),
+    opacity 150ms linear, background 160ms ease, border-color 160ms ease,
+    box-shadow 180ms cubic-bezier(0.23, 1, 0.32, 1);
   position: relative;
 }
 
 .card:hover {
-  background: var(--faint);
+  background: var(--card-hover);
+  transform: translateY(-1px);
+}
+
+.card[draggable="true"] {
+  cursor: grab;
+}
+
+.card[draggable="true"]:active {
+  cursor: grabbing;
 }
 
 .card.selected {
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  background: var(--card-hover);
+  border-color: color-mix(in srgb, var(--text) 24%, var(--hairline));
+  box-shadow: var(--shadow-card),
+    0 0 0 0.5px color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.card.dragging-prompt {
+  opacity: 0.58;
+  transform: scale(0.985);
+  border-color: color-mix(in srgb, var(--accent) 22%, var(--hairline));
+  box-shadow: 0 2px 6px rgba(39, 48, 43, 0.06);
+  cursor: grabbing;
+}
+
+.card.dragging-files .card-attachments {
+  margin: -3px;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.settled-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 3px 3px;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 550;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.settled-block {
+  margin-top: 12px;
+  padding-top: 1px;
+}
+
+.settled-rule {
+  height: 0.5px;
+  flex: 1;
+  background: color-mix(in srgb, var(--hairline) 72%, transparent);
+}
+
+.settled-clear {
+  padding: 3px 4px;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0.72;
+  transition: color 140ms ease, opacity 140ms ease;
+}
+
+.settled-clear:hover,
+.settled-clear:focus-visible {
+  color: var(--text);
+  opacity: 1;
+}
+
+.card.done {
+  align-items: center;
+  gap: 8px;
+  margin-block: 2px;
+  padding: 6px 9px;
+  border-color: transparent;
+  background: transparent;
   box-shadow: none;
+  color: var(--muted);
+  opacity: 0.72;
+}
+
+.card.done:hover {
+  background: var(--faint);
+  box-shadow: none;
+  opacity: 0.92;
+  transform: none;
+}
+
+.card.done.selected {
+  border-color: color-mix(in srgb, var(--text) 20%, var(--hairline));
+  background: var(--faint);
+  box-shadow: none;
+  opacity: 1;
+}
+
+.card.done .card-body {
+  gap: 0;
 }
 
 .card.done .card-content {
+  display: block;
+  overflow: hidden;
+  color: inherit;
+  font-size: 11.5px;
+  line-height: 1.35;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settled-context {
+  max-width: 72px;
+  flex: 0 0 auto;
+  overflow: hidden;
   color: var(--muted);
-  text-decoration: line-through;
-  text-decoration-color: var(--hairline);
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.72;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card.settling:not(.done) {
+  z-index: 1;
+  pointer-events: none;
+  animation: settle-depart 145ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.card.settling.done {
+  animation: settle-land 240ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+
+@keyframes settle-depart {
+  65% {
+    opacity: 0.72;
+    transform: translateY(2px) scale(0.99);
+  }
+
+  to {
+    opacity: 0.22;
+    transform: translateY(7px) scale(0.975);
+  }
+}
+
+@keyframes settle-land {
+  from {
+    opacity: 0.16;
+    transform: translateY(-6px) scale(0.975);
+  }
+
+  70% {
+    opacity: 0.78;
+    transform: translateY(1px) scale(1.004);
+  }
+
+  to {
+    opacity: 0.72;
+    transform: none;
+  }
 }
 
 .check {
   flex-shrink: 0;
   width: 16px;
   height: 16px;
-  margin-top: 1px;
+  margin-top: 2px;
   border-radius: 50%;
   border: 1.5px solid var(--muted);
   display: inline-flex;
@@ -387,6 +714,193 @@ kbd {
   justify-content: center;
   color: transparent;
   transition: all 0.12s ease;
+}
+
+.card-body {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.card-attachments,
+.composer-attachments {
+  display: flex;
+  min-width: 0;
+  gap: 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  transition: background 160ms ease, box-shadow 160ms ease;
+}
+
+.card-attachments::-webkit-scrollbar,
+.composer-attachments::-webkit-scrollbar {
+  display: none;
+}
+
+.attachment-tile {
+  position: relative;
+  flex: 0 0 auto;
+  width: 96px;
+  height: 54px;
+  overflow: hidden;
+  border: 0.5px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--faint);
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms ease,
+    box-shadow 160ms ease, opacity 150ms linear;
+}
+
+.attachment-tile.has-preview {
+  width: 58px;
+}
+
+.attachment-open {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  padding: 6px;
+  color: var(--text);
+  text-align: left;
+}
+
+button.attachment-open:hover {
+  background: color-mix(in srgb, var(--card-hover) 58%, transparent);
+}
+
+.attachment-tile:has(button.attachment-open:hover) {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--hairline));
+  box-shadow: 0 3px 10px rgba(39, 48, 43, 0.1);
+}
+
+.attachment-tile.selected {
+  border-color: color-mix(in srgb, var(--text) 34%, var(--hairline));
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.card.dragging-files .attachment-tile {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--hairline));
+  box-shadow: 0 4px 12px rgba(39, 48, 43, 0.1);
+}
+
+.card.dragging-files .attachment-tile:not(:hover) {
+  opacity: 0.78;
+}
+
+button.attachment-open[draggable="true"] {
+  cursor: grab;
+}
+
+button.attachment-open[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.attachment-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-tile.has-preview .attachment-open {
+  padding: 0;
+}
+
+.attachment-tile.has-preview .attachment-label {
+  display: none;
+}
+
+.attachment-file-icon {
+  position: relative;
+  display: inline-flex;
+  width: 26px;
+  height: 32px;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 5px;
+  color: var(--muted);
+}
+
+.attachment-file-icon svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  fill: color-mix(in srgb, var(--card) 72%, var(--faint));
+  stroke: currentColor;
+  stroke-linejoin: round;
+  stroke-width: 1;
+}
+
+.attachment-file-icon span {
+  position: relative;
+  max-width: 22px;
+  overflow: hidden;
+  font-size: 6.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.attachment-label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attachment-label strong,
+.attachment-label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-label strong {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.attachment-label small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.attachment-remove {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: inline-flex;
+  width: 17px;
+  height: 17px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text) 82%, transparent);
+  color: var(--bg-solid);
+  opacity: 0;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.attachment-remove svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.5;
+}
+
+.attachment-tile:hover .attachment-remove,
+.attachment-remove:focus-visible {
+  opacity: 1;
+}
+
+.attachment-remove:active {
+  transform: scale(0.9);
 }
 
 .check:hover {
@@ -411,6 +925,12 @@ kbd {
   overflow: hidden;
   user-select: text;
   cursor: default;
+}
+
+.card.expanded .card-content {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
 }
 
 .md-code {
@@ -514,28 +1034,42 @@ kbd {
 .composer {
   flex-shrink: 0;
   display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  margin: 5px 10px 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
+  min-height: 66px;
+  flex-direction: column;
+  gap: 6px;
+  margin: 5px 12px 12px;
+  padding: 8px 10px 7px;
+  border-radius: 15px;
   background: var(--card);
   box-shadow: var(--shadow-card);
-  border: 1px solid var(--hairline);
+  border: 1px solid color-mix(in srgb, var(--hairline) 78%, transparent);
   position: relative;
+  transition: border-color 180ms ease, box-shadow 180ms ease,
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1), background 180ms ease;
 }
 
 .composer:focus-within {
-  border-color: var(--hairline);
-  box-shadow: var(--shadow-card);
+  border-color: var(--accent);
+  box-shadow: var(--shadow-card), 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent),
+    0 10px 28px rgba(36, 58, 47, 0.13);
+}
+
+.composer-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
 }
 
 .composer textarea {
   flex: 1;
   min-width: 0;
+  min-height: 34px;
+  padding: 2px 0;
   resize: none;
   line-height: 1.45;
-  max-height: 120px;
+  max-height: 140px;
   user-select: text;
   cursor: text;
 }
@@ -548,12 +1082,141 @@ kbd {
   color: var(--muted);
 }
 
-.composer-hint {
-  position: absolute;
-  right: 12px;
-  bottom: -16px;
+.attach-button,
+.composer-submit {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  margin-top: 0;
+  border-radius: 50%;
+  color: var(--muted);
+  transition: background 150ms ease, color 150ms ease, transform 100ms ease;
+}
+
+.attach-button svg circle,
+.attach-button svg path,
+.composer-submit svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.35;
+}
+
+.attach-button:hover:not(:disabled) {
+  background: var(--faint);
+  color: var(--text);
+}
+
+.composer-submit {
+  align-self: flex-end;
+  background: var(--text);
+  color: var(--card);
+  opacity: 1;
+}
+
+.composer-submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.attach-button:active:not(:disabled),
+.composer-submit:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
+.attach-button:disabled,
+.composer-submit:disabled {
+  opacity: 0.34;
+}
+
+.attach-spinner {
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--hairline);
+  border-top-color: var(--muted);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.composer-attachments {
+  width: 100%;
+  padding: 1px 0 3px 32px;
+}
+
+.composer-meta {
+  display: flex;
+  min-height: 12px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-left: 32px;
   font-size: 10px;
+  color: var(--muted);
+}
+
+.composer-meta:empty {
+  display: none;
+}
+
+.composer-meta span:last-child {
+  margin-left: auto;
   color: var(--accent);
+}
+
+.composer-meta .warning {
+  color: var(--danger);
+}
+
+.composer-drop {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: max-content;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: var(--shadow-pop);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+  transform: translate(-50%, -50%);
+  animation: drop-in 140ms ease-out;
+}
+
+.composer.drop-active {
+  border: 1px dashed color-mix(in srgb, var(--accent) 62%, var(--hairline));
+  background: color-mix(in srgb, var(--card) 94%, var(--accent));
+  box-shadow: var(--shadow-card), 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+  transform: translateY(-1px);
+}
+
+.composer.drop-active > :not(.composer-drop) {
+  opacity: 0.46;
+  transform: scale(0.992);
+}
+
+.composer-drop svg path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.45;
+}
+
+@keyframes drop-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-50% + 4px)) scale(0.98);
+  }
 }
 
 /* ============ context menu ============ */
@@ -561,6 +1224,8 @@ kbd {
   position: fixed;
   z-index: 100;
   min-width: 200px;
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
   padding: 5px;
   border-radius: 10px;
   background: var(--card);
@@ -774,6 +1439,92 @@ kbd {
   justify-content: flex-end;
 }
 
+/* ============ settings ============ */
+.settings-overlay {
+  align-items: center;
+  padding-top: 0;
+}
+
+.settings-sheet {
+  padding: 16px;
+}
+
+.settings-subtitle {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 0.5px solid var(--hairline);
+}
+
+.shortcut-recorder {
+  width: 155px;
+  padding: 6px 8px;
+  border: 0.5px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--faint);
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.shortcut-recorder.recording {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.settings-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+
+.settings-error {
+  margin-top: 8px;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.settings-reset {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-reset:hover {
+  color: var(--text);
+}
+
+.settings-save {
+  min-width: 64px;
+  padding: 7px 13px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.settings-save:disabled {
+  opacity: 0.5;
+}
+
 /* ============ destructive confirmation ============ */
 .confirm-overlay {
   align-items: center;
@@ -825,10 +1576,14 @@ kbd {
   bottom: 84px;
   transform: translateX(-50%);
   z-index: 110;
-  padding: 7px 16px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 13px;
   border-radius: 999px;
-  background: var(--text);
-  color: var(--bg-solid);
+  border: 0.5px solid var(--hairline);
+  background: var(--card);
+  color: var(--text);
   font-size: 12px;
   font-weight: 500;
   box-shadow: var(--shadow-pop);
@@ -837,6 +1592,23 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.toast-icon {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.toast.error .toast-icon {
+  background: var(--danger);
 }
 
 @keyframes toast-in {
@@ -971,6 +1743,6 @@ kbd {
   }
 
   .card.selected {
-    border-color: var(--accent);
+    border-color: var(--text);
   }
 }
