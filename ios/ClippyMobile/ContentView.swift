@@ -231,6 +231,10 @@ struct ContentView: View {
 
     private var librarySections: some View {
         VStack(alignment: .leading, spacing: ClippySpace.m) {
+            if !model.library.inboxItems.isEmpty {
+                inboxCard
+            }
+
             HStack(alignment: .firstTextBaseline) {
                 Text("Lists")
                     .font(ClippyType.sectionTitle)
@@ -262,7 +266,10 @@ struct ContentView: View {
 
             if model.library.sections.isEmpty {
                 ContentUnavailableView {
-                    Label("No lists yet", systemImage: "list.bullet.clipboard")
+                    Label(
+                        model.library.inboxItems.isEmpty ? "No lists yet" : "No named lists yet",
+                        systemImage: "list.bullet.clipboard"
+                    )
                         .foregroundStyle(ClippyPalette.text)
                 } description: {
                     Text("Name one above. It will appear on your Mac automatically.")
@@ -271,6 +278,52 @@ struct ContentView: View {
                 .padding(.vertical, ClippySpace.l)
             }
         }
+    }
+
+    private var inboxCard: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: ClippySpace.s) {
+                Image(systemName: "tray.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(ClippyPalette.accent)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        ClippyPalette.accentPastel,
+                        in: RoundedRectangle(cornerRadius: ClippyRadius.s, style: .continuous)
+                    )
+
+                Text("Inbox")
+                    .font(ClippyType.subheading)
+                    .foregroundStyle(ClippyPalette.text)
+                Spacer()
+                Text("\(model.library.inboxItems.count)")
+                    .font(ClippyType.captionMedium)
+                    .foregroundStyle(ClippyPalette.muted)
+            }
+            .padding(.horizontal, ClippySpace.m)
+            .padding(.vertical, ClippySpace.s)
+
+            Divider().overlay(ClippyPalette.hairline)
+
+            ForEach(Array(model.library.inboxItems.enumerated()), id: \.element.id) { index, item in
+                itemRow(item)
+                    .padding(.horizontal, ClippySpace.m)
+                    .padding(.vertical, ClippySpace.s)
+                if index < model.library.inboxItems.count - 1 {
+                    Divider()
+                        .overlay(ClippyPalette.hairline)
+                        .padding(.leading, 49)
+                }
+            }
+        }
+        .background(ClippyPalette.paper)
+        .clipShape(RoundedRectangle(cornerRadius: ClippyRadius.l, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: ClippyRadius.l, style: .continuous)
+                .stroke(ClippyPalette.hairline.opacity(0.75), lineWidth: 0.5)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Inbox")
     }
 
     private func sectionCard(_ section: LocalSection) -> some View {

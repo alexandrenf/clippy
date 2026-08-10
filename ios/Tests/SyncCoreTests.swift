@@ -244,7 +244,9 @@ import Testing
         ]
     ))
 
-    #expect(await store.view().items.first?.sectionId == nil)
+    let view = await store.view()
+    #expect(view.items.first?.sectionId == nil)
+    #expect(view.inboxItems.map(\.id) == view.items.map(\.id))
 }
 
 @Test func replicaRejectsCausalGapsInsteadOfInventingObservedHistory() async throws {

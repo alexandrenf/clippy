@@ -95,6 +95,10 @@ public struct LocalSyncView: Equatable, Sendable {
         items.filter { $0.sectionId == sectionId }
     }
 
+    public var inboxItems: [LocalItem] {
+        items.filter { $0.sectionId == nil }
+    }
+
     public func attachments(for itemId: UUID) -> [LocalAttachment] {
         attachments.filter { $0.itemId == itemId }
     }
