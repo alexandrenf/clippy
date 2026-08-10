@@ -176,7 +176,10 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while building Clippy")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
                 sync::shutdown(app);
             }
         });

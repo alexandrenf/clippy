@@ -111,6 +111,11 @@ pub fn shutdown(app: &AppHandle) {
         return;
     };
     if let Ok(mut active) = runtime.active.lock() {
+        if let Some(sync) = active.as_ref() {
+            if let Ok(mut tunnel) = sync._tunnel.lock() {
+                tunnel.stop();
+            }
+        }
         active.take();
     };
 }
