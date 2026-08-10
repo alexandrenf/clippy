@@ -1,9 +1,18 @@
+import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState } from "react";
 import { useMotionExit } from "../motion";
 import { api } from "../store";
 
 const DEFAULT_SHOW = "CmdOrCtrl+Shift+Space";
 const DEFAULT_CAPTURE = "CmdOrCtrl+Alt+C";
+type SyncState = "idle" | "syncing" | "synced" | "waitingForDevice";
+
+const syncStateLabel: Record<SyncState, string> = {
+  idle: "Not connected",
+  syncing: "Syncing through Convex…",
+  synced: "Synced through Convex",
+  waitingForDevice: "Convex connected · waiting to retry",
+};
 
 interface Props {
   showShortcut: string;
@@ -82,6 +91,7 @@ export default function SettingsSheet({
   const [error, setError] = useState<string | null>(null);
   const [syncEnvironment, setSyncEnvironment] = useState<"staging" | "production">("production");
   const [syncConnected, setSyncConnected] = useState(false);
+  const [syncState, setSyncState] = useState<SyncState>("idle");
   const [signInBusy, setSignInBusy] = useState(false);
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [agentEnabled, setAgentEnabled] = useState(false);
@@ -105,13 +115,33 @@ export default function SettingsSheet({
   useEffect(() => {
     let cancelled = false;
     setSyncConnected(false);
-    void api.syncAuthStatus(syncEnvironment).then((connected) => {
-      if (!cancelled) setSyncConnected(connected);
-    });
+    void Promise.all([api.syncAuthStatus(syncEnvironment), api.syncStatus()]).then(
+      ([connected, state]) => {
+        if (!cancelled) {
+          setSyncConnected(connected);
+          setSyncState(state);
+        }
+      },
+    );
     return () => {
       cancelled = true;
     };
   }, [syncEnvironment]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<SyncState>("sync-state-changed", (event) => {
+      if (!disposed) setSyncState(event.payload);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -197,8 +227,16 @@ export default function SettingsSheet({
           >
             {signInBusy ? "Connecting…" : syncConnected ? "Signed in" : "Sign in"}
           </button>
-          {syncConnected && <span className="settings-hint">Account sync is ready</span>}
+          {syncConnected && (
+            <span className="settings-hint">{syncStateLabel[syncState]}</span>
+          )}
         </div>
+        {syncConnected && (
+          <p className="settings-hint">
+            Convex Cloud is the live coordination layer for this {syncEnvironment} workspace.
+            Encrypted note and file contents remain device-readable only.
+          </p>
+        )}
         {syncConnected && (
           <div className="settings-actions">
             <button

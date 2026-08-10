@@ -1,9 +1,13 @@
 use super::config::Environment;
 use super::crypto::{PairingGrant, PairingOffer, SealedEnvelope};
+use convex::{AuthTokenFetcher, AuthenticationToken, ConvexClient, FunctionResult, Value};
+use futures::StreamExt;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use url::Url;
 
 const MAX_STORAGE_HASHES: usize = 64;
@@ -111,6 +115,67 @@ impl CloudClient {
             serde_json::json!({ "workspaceId": workspace_id, "actorId": actor_id }),
         )
         .await
+    }
+
+    /// Keep the desktop coordinator attached to Convex's reactive frontier.
+    /// The HTTP query remains the source of data for each exchange; this small
+    /// subscription only wakes that exchange as soon as any device advances.
+    pub async fn watch_changes(
+        &self,
+        workspace_id: &str,
+        actor_id: &str,
+        wake: Arc<Notify>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), CloudError> {
+        let mut client = ConvexClient::new(self.deployment_url.as_str())
+            .await
+            .map_err(|_| CloudError::Connection)?;
+        let environment = self.environment;
+        let db_path = self.db_path.clone();
+        let fetcher: AuthTokenFetcher = Box::new(move |force_refresh| {
+            let db_path = db_path.clone();
+            Box::pin(async move {
+                let current = super::auth_login::access_token(environment, &db_path)
+                    .map_err(anyhow::Error::msg)?;
+                let token =
+                    if force_refresh || super::auth_login::access_token_expires_soon(&current) {
+                        super::auth_login::refresh_access_token(environment, &db_path)
+                            .await
+                            .map_err(anyhow::Error::msg)?
+                    } else {
+                        current
+                    };
+                Ok(AuthenticationToken::User(token))
+            })
+        });
+        client.set_auth_callback(Some(fetcher)).await;
+        let args = BTreeMap::from([
+            (
+                "workspaceId".to_string(),
+                Value::String(workspace_id.to_string()),
+            ),
+            ("actorId".to_string(), Value::String(actor_id.to_string())),
+        ]);
+        let mut subscription = client
+            .subscribe("sync:changes", args)
+            .await
+            .map_err(|_| CloudError::Connection)?;
+
+        loop {
+            tokio::select! {
+                result = subscription.next() => match result {
+                    Some(FunctionResult::Value(_)) => wake.notify_one(),
+                    Some(FunctionResult::ErrorMessage(_)
+                        | FunctionResult::ConvexError(_)) => return Err(CloudError::Rejected),
+                    None => return Err(CloudError::Connection),
+                },
+                _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                    if cancelled.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
     }
 
     pub async fn push(

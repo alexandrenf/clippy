@@ -284,6 +284,13 @@ fn spawn_coordinator(
     wake: Arc<Notify>,
     cancelled: Arc<AtomicBool>,
 ) {
+    spawn_convex_change_watcher(
+        cloud.clone(),
+        config.workspace_id.clone(),
+        actor.clone(),
+        wake.clone(),
+        cancelled.clone(),
+    );
     tauri::async_runtime::spawn(async move {
         let mut confirmed_remote_chunks = HashSet::new();
         loop {
@@ -351,6 +358,34 @@ fn spawn_coordinator(
                 _ = wake.notified() => {}
                 _ = tokio::time::sleep(safety_delay) => {}
             }
+        }
+    });
+}
+
+fn spawn_convex_change_watcher(
+    cloud: CloudClient,
+    workspace_id: String,
+    actor: String,
+    wake: Arc<Notify>,
+    cancelled: Arc<AtomicBool>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let retry_delays = [1_u64, 2, 4, 8, 16, 30];
+        let mut retry = 0;
+        while !cancelled.load(Ordering::Acquire) {
+            let result = cloud
+                .watch_changes(&workspace_id, &actor, wake.clone(), cancelled.clone())
+                .await;
+            if cancelled.load(Ordering::Acquire) {
+                break;
+            }
+            if result.is_ok() {
+                retry = 0;
+                continue;
+            }
+            let delay = retry_delays[retry];
+            retry = (retry + 1).min(retry_delays.len() - 1);
+            tokio::time::sleep(Duration::from_secs(delay)).await;
         }
     });
 }

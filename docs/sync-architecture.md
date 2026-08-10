@@ -22,8 +22,9 @@ operations with a monotonically increasing actor counter.
    document to Convex.
 3. Each device row stores only its latest accepted counter. The iOS app
    subscribes to that small `sync:changes` query, so note payloads are not read
-   merely to detect a change. Desktop sync wakes on local changes and uses a
-   30-second visible or five-minute hidden safety check.
+   merely to detect a change. Desktop now subscribes to the same Convex query
+   through the official Rust client, while a 30-second visible or five-minute
+   hidden check remains only as a reconnect safety net.
 4. A pull reads at most 12 missing encrypted batches. Clients authenticate the
    workspace, actor, and counter range as AEAD associated data before applying
    the operations idempotently.
