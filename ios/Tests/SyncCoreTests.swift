@@ -366,6 +366,12 @@ import Testing
     #expect(view.attachments.first?.size == 4)
     #expect(view.attachments.first?.manifest?.fileSha256 == fileHash)
     #expect(SyncCrypto.payloadAAD(workspaceId: workspace) == lengthPrefixed(["clippy-sync-payload", "1", workspace]))
+    #expect(SyncCrypto.batchAAD(
+        workspaceId: workspace,
+        actorId: view.actorId,
+        firstCounter: 4,
+        lastCounter: 9
+    ) == lengthPrefixed(["clippy-sync-batch", "1", workspace, view.actorId, "4", "9"]))
     #expect(SyncCrypto.chunkAAD(workspaceId: workspace, hash: chunkHash) == lengthPrefixed(["clippy-sync-chunk", "1", workspace, chunkHash]))
     #expect(SyncCrypto.payloadAAD(workspaceId: "workspace-123").testHex == "00000013636c697070792d73796e632d7061796c6f616400000001310000000d776f726b73706163652d313233")
 }
@@ -441,7 +447,7 @@ import Testing
     let fixture = try JWTFixture()
     let verifier = try fixture.verifier(now: now)
     let token = try fixture.token(
-        clientId: "wrong-client",
+        audience: "wrong-client",
         expiresAt: now.addingTimeInterval(300)
     )
 
@@ -543,7 +549,6 @@ private struct JWTFixture {
     func token(
         issuer: String? = nil,
         audience: String? = nil,
-        clientId: String? = nil,
         expiresAt: Date,
         nonce: String? = nil
     ) throws -> String {
@@ -553,7 +558,6 @@ private struct JWTFixture {
         var claims: [String: Any] = [
             "iss": issuer ?? self.issuer.absoluteString,
             "aud": audience ?? self.audience,
-            "client_id": clientId ?? self.audience,
             "exp": expiresAt.timeIntervalSince1970,
             "sub": "user-123",
             "org_id": "org-123"

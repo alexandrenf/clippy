@@ -31,14 +31,12 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CONVEX_URL</key>
+	<string>$(CONVEX_URL)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Take photos to attach to your Clippy items.</string>
-	<key>RELAY_BASE_URL</key>
-	<string>$(RELAY_BASE_URL)</string>
-	<key>SYNC_ENDPOINT_HOST_SUFFIX</key>
-	<string>$(SYNC_ENDPOINT_HOST_SUFFIX)</string>
 	<key>SYNC_ENVIRONMENT</key>
 	<string>$(SYNC_ENVIRONMENT)</string>
 	<key>UIApplicationSceneManifest</key>

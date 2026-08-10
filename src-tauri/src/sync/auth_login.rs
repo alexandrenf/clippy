@@ -8,9 +8,11 @@ use base64::Engine;
 use jsonwebtoken::jwk::JwkSet;
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use rand_core::{OsRng, RngCore};
-use serde::Deserialize;
+use rusqlite::{params, Connection};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Duration;
 use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -19,13 +21,9 @@ use tokio::time::{timeout, Instant};
 use url::Url;
 
 const CALLBACK: &str = "http://127.0.0.1:49834/auth/callback";
-// Keep browser-session credentials separate from CLI-created legacy entries.
-// A GUI-owned item avoids macOS asking users to approve another executable's
-// Keychain ACL when Clippy refreshes a session.
-const AUTH_KEYCHAIN_SERVICE: &str = "app.clippy.desktop.auth.v2";
 const CALLBACK_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-pub async fn sign_in(environment: Environment) -> Result<(), String> {
+pub async fn sign_in(environment: Environment, db_path: &Path) -> Result<(), String> {
     let config = LoginConfig::load(environment)?;
     let listener = TcpListener::bind("127.0.0.1:49834")
         .await
@@ -51,28 +49,119 @@ pub async fn sign_in(environment: Environment) -> Result<(), String> {
         return Err("AuthKit token identities did not match".into());
     }
 
-    store_token(environment, "access-token", tokens.access_token.as_bytes())?;
-    store_token(environment, "id-token", tokens.id_token.as_bytes())?;
-    if let Some(refresh_token) = tokens.refresh_token {
-        store_token(environment, "refresh-token", refresh_token.as_bytes())?;
-    }
+    store_session(
+        db_path,
+        environment,
+        &StoredOAuthSession {
+            access_token: tokens.access_token,
+            id_token: tokens.id_token,
+            refresh_token: tokens.refresh_token,
+        },
+    )?;
     Ok(())
 }
 
-pub async fn is_signed_in(environment: Environment) -> bool {
+pub async fn is_signed_in(environment: Environment, db_path: &Path) -> bool {
     let config = match LoginConfig::load(environment) {
         Ok(config) => config,
         Err(_) => return false,
     };
-    let token = match load_token(environment, "access-token") {
-        Some(token) => token,
+    let session = match load_session(db_path, environment) {
+        Some(session) => session,
         None => return false,
     };
     let verifier = match WorkOsVerifier::new(config.issuer.to_string(), config.client_id) {
         Ok(verifier) => verifier,
         Err(_) => return false,
     };
-    verifier.verify(&token).await.is_ok()
+    if verifier.verify(&session.access_token).await.is_ok() {
+        true
+    } else if access_token_expires_soon(&session.access_token) {
+        // A rejected refresh removes the unusable local session. Network and
+        // service failures intentionally preserve it so an offline launch does
+        // not look like a logout or force another browser sign-in.
+        let _ = refresh_access_token(environment, db_path).await;
+        load_session(db_path, environment).is_some()
+    } else {
+        true
+    }
+}
+
+pub fn access_token(environment: Environment, db_path: &Path) -> Result<String, String> {
+    load_session(db_path, environment)
+        .map(|session| session.access_token)
+        .ok_or_else(|| "Sign in from Clippy Settings before enabling sync".to_string())
+}
+
+pub fn sign_out(environment: Environment, db_path: &Path) {
+    delete_session(db_path, environment);
+}
+
+pub async fn refresh_access_token(
+    environment: Environment,
+    db_path: &Path,
+) -> Result<String, String> {
+    let config = LoginConfig::load(environment)?;
+    let mut session = load_session(db_path, environment)
+        .ok_or_else(|| "Desktop sign-in expired; sign in again from Clippy Settings".to_string())?;
+    let refresh_token = session
+        .refresh_token
+        .as_deref()
+        .ok_or_else(|| "Desktop sign-in expired; sign in again from Clippy Settings".to_string())?;
+    let endpoint = config
+        .issuer
+        .join("oauth2/token")
+        .map_err(|_| "AuthKit token endpoint is invalid".to_string())?;
+    let response = reqwest::Client::builder()
+        .https_only(true)
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|_| "Could not create the AuthKit client".to_string())?
+        .post(endpoint)
+        .form(&[
+            ("client_id", config.client_id.as_str()),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+        ])
+        .send()
+        .await
+        .map_err(|_| "Could not refresh desktop sign-in; Clippy will retry".to_string())?;
+    if matches!(response.status().as_u16(), 400 | 401 | 403) {
+        delete_session(db_path, environment);
+        return Err("Desktop sign-in expired; sign in again from Clippy Settings".into());
+    }
+    let tokens: RefreshTokenSet = response
+        .error_for_status()
+        .map_err(|_| "Could not refresh desktop sign-in; Clippy will retry".to_string())?
+        .json()
+        .await
+        .map_err(|_| "AuthKit returned an invalid refresh response".to_string())?;
+    let verifier = WorkOsVerifier::new(config.issuer.to_string(), config.client_id)
+        .map_err(|_| "WorkOS configuration is invalid".to_string())?;
+    verifier
+        .verify(&tokens.access_token)
+        .await
+        .map_err(|_| "AuthKit returned an invalid access token".to_string())?;
+    session.access_token = tokens.access_token.clone();
+    if let Some(refresh_token) = tokens.refresh_token {
+        session.refresh_token = Some(refresh_token);
+    }
+    store_session(db_path, environment, &session)?;
+    Ok(tokens.access_token)
+}
+
+pub fn access_token_expires_soon(token: &str) -> bool {
+    let expires_at = token
+        .split('.')
+        .nth(1)
+        .and_then(|payload| URL_SAFE_NO_PAD.decode(payload).ok())
+        .and_then(|payload| serde_json::from_slice::<AccessExpiry>(&payload).ok())
+        .map(|claims| claims.exp);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(u64::MAX);
+    expires_at.is_none_or(|expires_at| expires_at <= now.saturating_add(60))
 }
 
 struct LoginConfig {
@@ -298,24 +387,58 @@ fn secure_eq(left: &[u8], right: &[u8]) -> bool {
     left.len() == right.len() && bool::from(left.ct_eq(right))
 }
 
-fn store_token(environment: Environment, kind: &str, value: &[u8]) -> Result<(), String> {
-    security_framework::passwords::set_generic_password(
-        AUTH_KEYCHAIN_SERVICE,
-        &format!("workos:{}:{kind}", environment.as_str()),
-        value,
-    )
-    .map_err(|_| {
-        "Clippy couldn't finish sign-in securely. Reopen Clippy and try again.".to_string()
-    })
+fn session_key(environment: Environment) -> String {
+    format!("oauth-session:{}", environment.as_str())
 }
 
-fn load_token(environment: Environment, kind: &str) -> Option<String> {
-    security_framework::passwords::get_generic_password(
-        AUTH_KEYCHAIN_SERVICE,
-        &format!("workos:{}:{kind}", environment.as_str()),
-    )
-    .ok()
-    .and_then(|value| String::from_utf8(value).ok())
+fn store_session(
+    db_path: &Path,
+    environment: Environment,
+    session: &StoredOAuthSession,
+) -> Result<(), String> {
+    if session.access_token.is_empty()
+        || session.id_token.is_empty()
+        || session.access_token.len() > 65_536
+        || session.id_token.len() > 65_536
+        || session
+            .refresh_token
+            .as_ref()
+            .is_some_and(|token| token.is_empty() || token.len() > 65_536)
+    {
+        return Err("AuthKit returned invalid session credentials".into());
+    }
+    let value = serde_json::to_string(session)
+        .map_err(|_| "Could not save the desktop sign-in".to_string())?;
+    let connection = Connection::open(db_path)
+        .map_err(|_| "Could not open Clippy's private local database".to_string())?;
+    crate::db::set_setting(&connection, &session_key(environment), &value)
+        .map_err(|_| "Could not save the desktop sign-in".to_string())
+}
+
+fn load_session(db_path: &Path, environment: Environment) -> Option<StoredOAuthSession> {
+    let connection = Connection::open(db_path).ok()?;
+    let value = crate::db::get_setting(&connection, &session_key(environment))?;
+    if value.len() > 200_000 {
+        return None;
+    }
+    let session: StoredOAuthSession = serde_json::from_str(&value).ok()?;
+    (!session.access_token.is_empty() && !session.id_token.is_empty()).then_some(session)
+}
+
+fn delete_session(db_path: &Path, environment: Environment) {
+    if let Ok(connection) = Connection::open(db_path) {
+        let _ = connection.execute(
+            "DELETE FROM settings WHERE key = ?1",
+            params![session_key(environment)],
+        );
+    }
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+struct StoredOAuthSession {
+    access_token: String,
+    id_token: String,
+    refresh_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -323,6 +446,17 @@ struct TokenSet {
     access_token: String,
     id_token: String,
     refresh_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RefreshTokenSet {
+    access_token: String,
+    refresh_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AccessExpiry {
+    exp: u64,
 }
 
 #[derive(Deserialize)]
@@ -341,6 +475,44 @@ mod tests {
             parse_callback_target("/auth/callback?code=x&state=wrong", "expected"),
             Err("AuthKit callback state did not match".into())
         );
+    }
+
+    #[test]
+    fn access_token_refreshes_before_expiry_or_when_malformed() {
+        let future = format!(
+            "header.{}.signature",
+            URL_SAFE_NO_PAD.encode(br#"{"exp":4000000000}"#)
+        );
+        let expired = format!(
+            "header.{}.signature",
+            URL_SAFE_NO_PAD.encode(br#"{"exp":1}"#)
+        );
+        assert!(!access_token_expires_soon(&future));
+        assert!(access_token_expires_soon(&expired));
+        assert!(access_token_expires_soon("not-a-jwt"));
+    }
+
+    #[test]
+    fn oauth_session_persists_in_the_private_database_without_keychain() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("clippy.db");
+        crate::db::init(&path).unwrap();
+        let expected = StoredOAuthSession {
+            access_token: "access".into(),
+            id_token: "identity".into(),
+            refresh_token: Some("refresh".into()),
+        };
+
+        store_session(&path, Environment::Production, &expected).unwrap();
+        let restored = load_session(&path, Environment::Production).unwrap();
+
+        assert_eq!(restored.access_token, expected.access_token);
+        assert_eq!(restored.id_token, expected.id_token);
+        assert_eq!(restored.refresh_token, expected.refresh_token);
+        assert!(load_session(&path, Environment::Staging).is_none());
+
+        sign_out(Environment::Production, &path);
+        assert!(load_session(&path, Environment::Production).is_none());
     }
 
     #[tokio::test]

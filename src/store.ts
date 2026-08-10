@@ -72,6 +72,8 @@ export const api = {
   installAgentCompanion: () => invoke<void>("install_agent_companion"),
   signInSync: (environment: "staging" | "production" = "production") =>
     invoke<{ environment: string; endpoint: string }>("sign_in_sync", { environment }),
+  signOutSync: (environment: "staging" | "production" = "production") =>
+    invoke<void>("sign_out_sync", { environment }),
   syncAuthStatus: (environment: "staging" | "production" = "production") =>
     invoke<boolean>("sync_auth_status", { environment }),
   syncStatus: () =>

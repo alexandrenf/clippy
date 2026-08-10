@@ -1,198 +1,129 @@
-# Clippy multi-device sync
+# Clippy centralized sync
 
-Status: usable end-to-end implementation pending live-device acceptance. The
-repository includes the authenticated loopback origin, database scanner and
-projector, bounded delta pagination, end-to-end encrypted chunk transfer,
-atomic attachment reconstruction, automatic same-account device enrollment, persistent
-Cloudflare connector and relay, durable iPhone replica, foreground WebSocket
-hints, and menu-bar state. APNs, camera QR scanning, device revocation/key
-rotation, and live physical-device acceptance are not complete; do not treat
-the current build as production-ready sync yet.
+Clippy sync has two hosted pieces and no always-on Clippy server:
 
-## Environments
+- Convex is the authenticated coordination and operation database.
+- A private Cloudflare R2 bucket holds encrypted attachment chunks.
 
-Staging and Production are intentionally isolated. A build must never infer
-Production values from Staging.
+The former Cloudflare Tunnel, loopback origin, relay Worker, D1 database, and
+`cloudflared` process are retired. WorkOS remains the login provider. Clippy
+clients keep the existing CRDT and end-to-end encryption, so Convex and
+Cloudflare receive ciphertext and routing metadata rather than note or file
+contents.
 
-| Setting | Staging | Production |
-| --- | --- | --- |
-| Public hostname | `https://clippy-staging.saudecomalex.com` | `https://clippy.saudecomalex.com` |
-| Loopback origin | `127.0.0.1:49832` | `127.0.0.1:49833` |
-| Desktop OAuth callback | `http://127.0.0.1:49834/auth/callback` | same path, separately registered |
-| iOS callback | `clippy-sync://auth/callback` | same URI, separately registered |
-| iOS bundle ID | `app.clippy.mobile` | `app.clippy.mobile` |
-| WorkOS audience | `client_01KZMNQXBXWT2A807NZCE6V2HV` | `client_01KZMNK73NWS9NDAPC3T54S2PE` |
-| WorkOS issuer | `https://fashionable-machine-85-staging.authkit.app` | `https://brave-mermaid-84.authkit.app` |
-| WorkOS policy | development providers | six-digit email Magic Auth only |
+## Data flow
 
-The client IDs, hostnames, and issuer URLs are public routing metadata. WorkOS
-API keys, OAuth client secrets, Cloudflare tunnel tokens, access/refresh tokens,
-and workspace encryption keys must never be placed in source, xcconfig, logs,
-process arguments, or SQLite.
+Every device owns a random actor UUID. Local mutations become immutable CRDT
+operations with a monotonically increasing actor counter.
 
-The installed desktop defaults to Production, generates and persists a
-workspace UUID on first account link, and remembers the chosen environment in
-SQLite. `CLIPPY_SYNC_ENVIRONMENT`, `CLIPPY_SYNC_WORKSPACE_ID`,
-`CLIPPY_SYNC_TUNNEL_URL`, `CLIPPY_WORKOS_ISSUER`, and
-`CLIPPY_WORKOS_AUDIENCE` are development overrides, not requirements for a
-normally launched app. iOS uses separate Staging and Production xcconfig files.
+1. A client scans or commits local changes.
+2. It groups up to 256 consecutive operations into a payload no larger than
+   550 KB, encrypts it with ChaCha20-Poly1305, and writes one `operationBatches`
+   document to Convex.
+3. Each device row stores only its latest accepted counter. The iOS app
+   subscribes to that small `sync:changes` query, so note payloads are not read
+   merely to detect a change. Desktop sync wakes on local changes and uses a
+   30-second visible or five-minute hidden safety check.
+4. A pull reads at most 12 missing encrypted batches. Clients authenticate the
+   workspace, actor, and counter range as AEAD associated data before applying
+   the operations idempotently.
 
-## Authentication
+Convex has four tables: `workspaces`, `devices`, `operationBatches`, and
+short-lived `enrollments`. It does not store file bytes, plaintext entity
+projections, OAuth tokens, or workspace encryption keys. Batches are append
+only in schema version 1; future compaction must preserve a snapshot before
+deleting history.
 
-The normal desktop flow starts from the **Sign in** button in Clippy Settings.
-Clippy opens the system browser and listens only on `127.0.0.1:49834`; AuthKit
-redirects back automatically, so there is no authorization code to copy and no
-terminal involved. The app checks a random OAuth `state`, validates the OIDC
-`nonce`, verifies RS256 signatures from `<issuer>/oauth2/jwks`, enforces
-issuer/audience/expiry/subject, compares the access-token and ID-token subjects,
-stores tokens in environment-separated macOS Keychain entries, and links the
-selected relay environment.
+## Attachments and R2
 
-The `clippy-sync` CLI provides the same browser/loopback login as an optional
-developer and recovery path:
+Files are split into one-MiB content-addressed chunks. The existing manifest
+contains the full-file SHA-256, size, and ordered chunk hashes. Each chunk is
+encrypted independently with workspace-and-hash-bound AAD.
 
-```sh
-cd src-tauri
-cargo run --bin clippy-sync -- login --environment staging
+Before publishing a manifest operation, a client asks the Convex
+`storage:prepareUploads` action about at most 64 hashes. The action performs R2
+HEAD requests and returns five-minute PUT URLs only for missing objects. The
+client uploads ciphertext directly to R2. Downloads use the equivalent
+five-minute GET URLs. Convex never proxies the bytes.
+
+Objects use this private key layout:
+
+```text
+v1/<sha256 of WorkOS token identifier>/<workspace UUID>/<chunk sha256>.e2ee
 ```
 
-Neither flow uses a public-client secret or prints token material.
+Keep the bucket private. Native clients use R2's S3 API endpoint through signed
+URLs, so browser CORS is not required. Cloudflare R2 presigned URLs do not work
+through a custom domain. `clippyr2.saudecomalex.com` can later be a separate
+login-protected human portal, but the sync transport must continue using the
+private S3 endpoint unless a Cloudflare Worker is added. No Worker is required
+for the implementation in this repository.
 
-iOS uses `ASWebAuthenticationSession` and PKCE. Tokens use environment-scoped,
-ThisDeviceOnly Keychain accessibility. Both the iPhone and origin verify RS256
-signatures and issuer/audience/expiry/subject against WorkOS JWKS; the iPhone
-also validates the OIDC nonce before storage and refreshes or signs out when a
-refresh token is invalid. The origin pins the WorkOS `sub` plus optional
-`org_id` to the workspace. Token values and Authorization headers are never
-logged.
+## Authentication and enrollment
 
-## Data model and convergence
+Each Convex deployment trusts the matching WorkOS AuthKit issuer and client ID.
+Every query, mutation, and action checks the authenticated WorkOS token
+identifier. One WorkOS account owns one workspace per deployment; staging and
+production remain isolated.
 
-Every device has a random actor UUID. Every immutable operation has an actor and
-monotonic counter (`Dot`); the delta frontier is the greatest counter observed
-for each actor (`VersionVector`). Duplicate operations are harmless.
+The first signed-in Mac creates the workspace UUID and a random 256-bit
+workspace key. The key remains in macOS Keychain. A signed-in iPhone without a
+key publishes a ten-minute enrollment request containing an ephemeral X25519
+public key. The Mac publishes a one-use X25519/HKDF-wrapped grant, and the phone
+stores the recovered workspace key in its ThisDeviceOnly Keychain before
+accepting device membership. Convex sees the public keys and encrypted grant,
+not the workspace key.
 
-- Section, item metadata, attachment metadata, and tombstones use an LWW
-  register ordered by `(counter, actor UUID)`.
-- Item content uses a causal multi-value register. A later edit supersedes only
-  versions it observed. Concurrent edits remain as separate values and set an
-  explicit conflict. A resolution operation observes all variants and replaces
-  them. A deterministic projection is available for legacy views, but variants
-  remain persisted and are never silently discarded.
-- A future schema version can migrate item content to a sequence CRDT for
-  character-level collaboration. Mixed schema versions must reject writes they
-  cannot interpret rather than downgrade them.
-- Tombstones are permanent in schema v1. Entity IDs are never reused; a future
-  explicit undelete/compaction protocol must be introduced before this changes.
+## Login persistence
 
-The wire JSON in Rust and Swift uses the same camel-case schema. SQLite stores
-immutable operations, frontiers, conflicts, and verified chunk locations in
-additive `sync_*` tables, leaving current Clippy IDs and tables intact.
+OAuth access, ID, and refresh tokens never use Keychain. Desktop stores one
+environment-scoped session record in Clippy's private SQLite database. Mobile
+stores the equivalent record in its app sandbox using atomic writes, iOS file
+protection after first unlock, mode `0600`, and backup exclusion. Temporary
+network, WorkOS, or signing-key failures retain that local session and retry;
+only an explicit sign-out, a rejected refresh, or an invalid token removes it.
+Both apps expose a per-device sign-out action. It stops that device's active
+sync transport and clears its OAuth session without deleting local content or
+the workspace key.
 
-## Account enrollment and end-to-end encryption
+Existing builds used Keychain for OAuth credentials. The new clients do not
+read those legacy entries, avoiding an access prompt; upgrading therefore
+requires one sign-in to create the new app-private session.
 
-Cloudflare terminates edge TLS, so TLS is necessary but not the only protection.
-All deltas and file chunks are encrypted before reaching the tunnel.
+Workspace encryption keys are not OAuth tokens. They remain in device-only
+Keychain storage so extracting a local database or token file is not sufficient
+to decrypt synced content.
 
-1. The Mac generates one persistent random 256-bit workspace key and stores it
-   in Keychain. Enrolling another same-account device never rotates or replaces
-   this key.
-2. After sign-in, the relay exposes only environments owned by that WorkOS
-   subject. The iPhone obtains a DPoP-bound environment session and sends a
-   fresh ephemeral X25519 public key to `/v1/sync/enroll`.
-3. The Mac verifies the session belongs to its exact WorkOS subject and optional
-   organization, then creates an internal ephemeral X25519 key and one-time
-   token. No QR, copied code, or user-visible pairing step exists.
-4. Both sides derive a one-use wrap key with X25519 and HKDF-SHA256. Enrollment AAD
-   length-prefixes and binds version, workspace, tunnel URL, WorkOS
-   issuer/audience, expiry, both public keys, WorkOS `sub`, and optional
-   `org_id`.
-5. The Mac encrypts the existing workspace key in an enrollment grant using
-   ChaCha20-Poly1305 with a random 96-bit nonce. The iPhone unwraps and stores it
-   in Keychain. The ephemeral private keys and one-time token are discarded.
-6. Delta and chunk envelopes use ChaCha20-Poly1305 with a fresh random nonce and
-   workspace/version AAD. Receivers reject replayed operation IDs and failed
-   authentication before mutation.
+Device revocation and workspace-key rotation are still required before treating
+sync as production-ready. A compromised unlocked enrolled device can read its
+local plaintext; centralized sync cannot protect against endpoint compromise.
 
-WorkOS authenticates people; it never derives or receives the workspace key.
-No Cloudflare Access service token is embedded in the iPhone app.
+## Setup later
 
-## File protocol
+Nothing here requires account credentials to build or test. When the accounts
+are ready, create separate Convex deployments and R2 buckets for staging and
+production.
 
-Files are split into 1 MiB chunks by default. A manifest records the full-file
-SHA-256, byte length, chunk size, and ordered `(SHA-256, length)` list.
+1. Copy `.env.example` to `.env.local` and run `npm run convex:dev` to connect a
+   development deployment. Convex will generate its normal `_generated` files.
+2. In each Convex deployment set `WORKOS_ISSUER`, `WORKOS_CLIENT_ID`,
+   `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and
+   `R2_SECRET_ACCESS_KEY` with `npx convex env set`. Use an R2 token scoped only
+   to the selected bucket.
+3. Set `CLIPPY_STAGING_CONVEX_URL` and `CLIPPY_PRODUCTION_CONVEX_URL` for desktop
+   builds. `CLIPPY_CONVEX_URL` is a local override.
+4. Replace the `CONVEX_URL` placeholders in `ios/Config/Staging.xcconfig` and
+   `ios/Config/Production.xcconfig`.
+5. Run `npm run convex:deploy` for the selected deployment. Verify WorkOS JWT
+   issuer/audience and R2 bucket isolation separately in staging and production.
 
-- `POST /v1/sync/chunks/missing` returns hashes absent at the origin.
-- `PUT /v1/sync/chunks/{sha256}` is idempotent and carries an E2EE envelope.
-- `GET /v1/sync/chunks/{sha256}` resumes individual missing chunks.
-- The receiver decrypts and verifies every plaintext chunk hash, reconstructs
-  into a temporary file, verifies total size and full-file hash, then atomically
-  installs it. A path/name from another device is metadata, never a filesystem
-  destination.
+Useful local validation:
 
-## Transport and scheduling
+```sh
+npm run convex:check
+npm run build
+cd ios && swift test
+```
 
-The named Cloudflare Tunnel maps the environment hostname to its loopback-only
-origin. Cloudflare Tunnel supports HTTPS/WebSockets and uses outbound-only
-connections. The Mac origin must still require a valid WorkOS JWT, E2EE, body
-limits, and unauthenticated rate limiting.
-
-`cloudflared` is not installed as an OS service. Once an account is linked it
-stays alive as a child of the running Clippy process so a foreground phone can
-wake a hidden Mac without polling. `TunnelRunner` reads the
-environment-specific token from macOS Keychain service
-`app.clippy.desktop.sync`, account `cloudflare-tunnel:staging` or
-`cloudflare-tunnel:production`, writes a `0600` temporary token file, launches
-`cloudflared tunnel --no-autoupdate run --token-file <path>` with
-stdin/stdout/stderr detached, retains the owner-only file for the child lifetime,
-then unlinks it on stop/drop. Initial activation is on account link or restoration
-of a prior workspace. Child restart uses capped exponential backoff with jitter.
-
-The steady state is push-driven over WebSocket. Hints contain no application
-state; they only trigger an authenticated delta exchange. Every desktop
-mutation already converges through one refresh hook, which wakes the scanner
-immediately. A 30-second visible / five-minute hidden scan is only a safety net
-for out-of-process database changes. iOS opens one authenticated socket only in
-the foreground, wakes immediately on connection/change hints and local writes,
-uses capped reconnect backoff, and keeps a five-minute safety exchange. It
-cancels the socket/timer in the background. APNs is deferred until credentials
-are provisioned.
-
-Menu-bar states are `idle`, `syncing`, `synced`, and `waitingForDevice`.
-Template-safe dot/ring overlays change only the small tray glyph and tooltip.
-
-## Threat model and required server checks
-
-Protected: clipboard text, sections/items, attachments, workspace key, OAuth
-tokens, tunnel credential, and operation history.
-
-Assumed trusted: each unlocked paired device, its OS Keychain, WorkOS issuer,
-and the shipped binaries. Cloudflare, public networks, DNS observers, and other
-users are not trusted with plaintext. A locally compromised unlocked device can
-read that device's clipboard and decrypted database; remote sync cannot solve
-endpoint compromise.
-
-Implemented origin controls:
-
-1. Bind only the environment-specific loopback port; WorkOS audience and E2EE
-   workspace AAD prevent staging/production cross-use.
-2. Verify JWT signature, algorithm, `iss`, `aud`, `exp`, `sub`, and optional
-   workspace `org_id` with cached/rotating JWKS.
-3. Isolate invalid-token rate buckets by Cloudflare client IP, apply a separate
-   generous authenticated-principal bucket for chunk bursts, and enforce a
-   12 MiB HTTP body cap, 8 MiB plaintext envelope cap, 2,000-operation pages,
-   1,024 missing-hash queries, one-MiB chunks, and 250 MiB files.
-4. Authenticate pairing before consuming its one-time token; allow one use and
-   a short expiry.
-5. Validate schema, workspace, actor/device membership, operation count, counter
-   monotonicity, and JSON field sizes before inserting idempotently.
-6. Decrypt/authenticate before projecting operations; never log payloads,
-   bearer headers, tokens, file names, or raw WorkOS responses.
-Remaining production control: device revocation must rotate the workspace key
-and re-pair retained devices. A Cloudflare origin rule/rate policy should also
-be verified in both live environments before release.
-
-References: [WorkOS standalone AuthKit token verification](https://workos.com/docs/authkit/connect/standalone),
-[WorkOS public OAuth applications](https://workos.com/docs/authkit/connect/oauth/public-applications),
-[Cloudflare Tunnel configuration](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/),
-and [Cloudflare Tunnel WebSocket support](https://developers.cloudflare.com/cloudflare-one/faq/cloudflare-tunnels-faq/).
+The checked-in `convex/_generated/server.ts` is a small pre-account typecheck
+shim. `convex dev` replaces it with deployment-generated types.

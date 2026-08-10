@@ -1,4 +1,4 @@
-import Combine
+@preconcurrency import Combine
 import Foundation
 import Network
 import UniformTypeIdentifiers
@@ -14,57 +14,68 @@ final class AppModel: ObservableObject {
     let auth: AuthController
     private let configuration: RuntimeConfiguration
     private let keychain = KeychainStore()
+    private let cloud: ConvexSyncClient
+    private var deviceActorId: String
     private var workspaceId: String?
-    private var environmentId: String?
     private var store: LocalSyncStore?
-    private var dpopSigner: DPoPSigner?
-    private var relayClient: RelayClient?
-    private var environmentSession: EnvironmentSession?
-    private var environmentConnectedAt: Date?
-    private var transport: SyncTransport?
-    private var connectionTask: Task<SyncTransport, Error>?
+    private var cloudAuthenticated = false
+    private var cloudCounters: [String: UInt64] = [:]
+    private var cloudAuthenticationTask: Task<Void, Never>?
+    private var cloudAuthenticationRetryTask: Task<Void, Never>?
     private var transientSyncRetryTask: Task<Void, Never>?
     private var accountEnrollmentTask: Task<Void, Never>?
-    private var supervisor = ConnectionSupervisor()
     private var safetyPollTask: Task<Void, Never>?
-    private var eventLoopTask: Task<Void, Never>?
     private var exchangeTask: Task<Void, Never>?
-    private var eventSocket: URLSessionWebSocketTask?
     private var authSubscription: AnyCancellable?
+    private var changesSubscription: AnyCancellable?
     private let pathMonitor = NWPathMonitor()
-    private let pathQueue = DispatchQueue(label: "app.clippy.mobile.relay-path")
+    private let pathQueue = DispatchQueue(label: "app.clippy.mobile.convex-path")
     private var isForeground = true
     private var isOnline = true
     private var exchangeInProgress = false
     private var syncRequested = false
+    private var retryIndex = 0
+    private var authenticationRetryIndex = 0
     private var exchangeGeneration = UUID()
-    private var eventLoopGeneration = UUID()
     private var confirmedRemoteChunks: Set<String> = []
 
     init(configuration: RuntimeConfiguration) {
         self.configuration = configuration
-        auth = AuthController(configuration: configuration)
-        if let data = try? keychain.load(account: configuration.keychainAccount("environment-id")),
-           let value = String(data: data, encoding: .utf8),
-           !value.isEmpty {
-            environmentId = value
+        let auth = AuthController(configuration: configuration)
+        self.auth = auth
+        cloud = ConvexSyncClient(deploymentURL: configuration.convexURL) {
+            try await auth.accessToken()
+        }
+        if let data = try? keychain.load(account: configuration.keychainAccount("device-actor")),
+           let value = String(data: data, encoding: .utf8), UUID(uuidString: value) != nil {
+            deviceActorId = value.lowercased()
+        } else {
+            let value = UUID().uuidString.lowercased()
+            deviceActorId = value
+            try? keychain.save(Data(value.utf8), account: configuration.keychainAccount("device-actor"))
         }
         if let data = try? keychain.load(account: configuration.keychainAccount("workspace-id")),
            let workspace = String(data: data, encoding: .utf8),
            !workspace.isEmpty {
             workspaceId = workspace
             syncState = .waitingForDevice
-            Task { [weak self] in await self?.openReplica(workspaceId: workspace) }
+            let acceptancePending = (try? keychain.load(
+                account: configuration.keychainAccount("pending-enrollment-id")
+            )) != nil
+            if !acceptancePending {
+                Task { [weak self] in await self?.openReplica(workspaceId: workspace) }
+            }
         }
         authSubscription = auth.$signedIn
             .removeDuplicates()
             .sink { [weak self] signedIn in
                 Task { @MainActor in
                     if signedIn {
-                        _ = self?.supervisor.credentialOrConfigurationWake(at: Date())
-                        self?.startForegroundNetworking()
+                        self?.ensureCloudAuthentication()
+                    } else {
+                        self?.cloudAuthenticated = false
+                        self?.stopForegroundNetworking()
                     }
-                    else { self?.stopForegroundNetworking() }
                 }
             }
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -75,12 +86,12 @@ final class AppModel: ObservableObject {
 
     deinit {
         safetyPollTask?.cancel()
-        eventLoopTask?.cancel()
         exchangeTask?.cancel()
-        eventSocket?.cancel(with: .goingAway, reason: nil)
-        connectionTask?.cancel()
         transientSyncRetryTask?.cancel()
+        cloudAuthenticationTask?.cancel()
+        cloudAuthenticationRetryTask?.cancel()
         accountEnrollmentTask?.cancel()
+        changesSubscription?.cancel()
         pathMonitor.cancel()
     }
 
@@ -260,15 +271,19 @@ final class AppModel: ObservableObject {
 
     func syncNow() { wakeSync() }
 
+    func signOut() {
+        auth.signOut()
+        cloudAuthenticated = false
+        stopForegroundNetworking()
+        Task { [cloud] in await cloud.signOut() }
+    }
+
     func sceneChanged(_ phase: UIScene.ActivationState) {
         isForeground = phase == .foregroundActive
         if isForeground {
             NotificationCenter.default.post(name: .clippySyncForegrounded, object: nil)
-            let command = supervisor.foregrounded(at: Date())
-            if command == .replaceConnection { invalidateEnvironmentSession() }
-            startForegroundNetworking()
+            ensureCloudAuthentication()
         } else {
-            _ = supervisor.backgrounded(at: Date())
             stopForegroundNetworking()
         }
     }
@@ -276,10 +291,8 @@ final class AppModel: ObservableObject {
     private func networkPathChanged(_ online: Bool) {
         guard isOnline != online else { return }
         isOnline = online
-        let command = supervisor.setOnline(online, at: Date())
         if online {
-            if command == .replaceConnection { invalidateEnvironmentSession() }
-            startForegroundNetworking()
+            ensureCloudAuthentication()
         } else {
             stopForegroundNetworking()
             syncState = workspaceId == nil ? .idle : .waitingForDevice
@@ -289,7 +302,7 @@ final class AppModel: ObservableObject {
     private func openReplica(workspaceId: String) async {
         do {
             try await installReplica(workspaceId: workspaceId)
-            startForegroundNetworking()
+            ensureCloudAuthentication()
         } catch {
             syncState = .waitingForDevice
             message = "Local sync data could not be opened."
@@ -297,12 +310,18 @@ final class AppModel: ObservableObject {
     }
 
     private func installReplica(workspaceId: String) async throws {
+        let actorId = deviceActorId
         let replica = try await Task.detached(priority: .userInitiated) {
-            try LocalSyncStore(workspaceId: workspaceId)
+            try LocalSyncStore(workspaceId: workspaceId, actorId: actorId)
         }.value
         confirmedRemoteChunks.removeAll(keepingCapacity: true)
         store = replica
         library = await replica.view()
+        deviceActorId = library.actorId
+        try? keychain.save(
+            Data(deviceActorId.utf8),
+            account: configuration.keychainAccount("device-actor")
+        )
     }
 
     private func refreshLibrary() async {
@@ -313,12 +332,61 @@ final class AppModel: ObservableObject {
         library = await store.view()
     }
 
-    /// Coalesces hints and local changes. A write arriving during an exchange
-    /// runs once more immediately after that exchange instead of cancelling an
-    /// ambiguous authenticated POST or starting parallel requests.
+    private func ensureCloudAuthentication() {
+        guard auth.signedIn, isForeground, isOnline else { return }
+        if cloudAuthenticated {
+            startForegroundNetworking()
+            return
+        }
+        guard cloudAuthenticationTask == nil, cloudAuthenticationRetryTask == nil else { return }
+        cloudAuthenticationTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await cloud.authenticate()
+                try Task.checkCancellation()
+                guard auth.signedIn, isForeground, isOnline else {
+                    cloudAuthenticationTask = nil
+                    return
+                }
+                cloudAuthenticated = true
+                authenticationRetryIndex = 0
+                do { _ = try await resumePendingEnrollmentAcceptance() }
+                catch { message = "Waiting to finish secure account enrollment." }
+                cloudAuthenticationTask = nil
+                startForegroundNetworking()
+            } catch is CancellationError {
+                cloudAuthenticationTask = nil
+            } catch {
+                cloudAuthenticated = false
+                cloudAuthenticationTask = nil
+                message = "Sync sign-in could not be verified by Convex. Clippy will retry."
+                scheduleCloudAuthenticationRetry()
+            }
+        }
+    }
+
+    private func scheduleCloudAuthenticationRetry() {
+        guard cloudAuthenticationRetryTask == nil, auth.signedIn, isForeground, isOnline else {
+            return
+        }
+        let ladder: [TimeInterval] = [1, 2, 4, 8, 16, 60]
+        let delay = ladder[min(authenticationRetryIndex, ladder.count - 1)]
+        authenticationRetryIndex = min(authenticationRetryIndex + 1, ladder.count - 1)
+        cloudAuthenticationRetryTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) }
+            catch { return }
+            guard let self else { return }
+            cloudAuthenticationRetryTask = nil
+            ensureCloudAuthentication()
+        }
+    }
+
+    /// Coalesces Convex change hints and local writes. A write arriving during
+    /// an exchange runs once more immediately instead of starting a parallel
+    /// mutation or cancelling an ambiguous upload.
     private func wakeSync() {
         guard isForeground, isOnline, store != nil, workspaceId != nil,
-              environmentId != nil, auth.signedIn else { return }
+              cloudAuthenticated, auth.signedIn else { return }
         syncRequested = true
         guard exchangeTask == nil else { return }
         let generation = UUID()
@@ -332,20 +400,44 @@ final class AppModel: ObservableObject {
                 exchangeCount += 1
                 guard await self.performSyncOnce() else { break }
             }
-            // A corrupt or non-advancing peer must not create an unbounded
-            // foreground request loop. Remaining durable work will be woken by
-            // the socket or the five-minute safety poll.
+            // A corrupt or non-advancing batch must not create an unbounded
+            // foreground request loop. Durable work is woken by Convex or the
+            // five-minute safety pass.
             if exchangeCount == 8 { self.syncRequested = false }
             if self.exchangeGeneration == generation { self.exchangeTask = nil }
         }
     }
 
     private func startForegroundNetworking() {
-        guard isForeground, isOnline, auth.signedIn else { return }
-        guard store != nil, workspaceId != nil, environmentId != nil else {
+        guard isForeground, isOnline, auth.signedIn, cloudAuthenticated else { return }
+        guard let store, let workspaceId else {
             beginAutomaticAccountEnrollment()
             return
         }
+        if changesSubscription == nil {
+            let actorId = library.actorId
+            changesSubscription = cloud
+                .changes(workspaceId: workspaceId, actorId: actorId)
+                .receive(on: RunLoop.main)
+                .sink(
+                    receiveCompletion: { [weak self] completion in
+                        guard let self else { return }
+                        self.changesSubscription = nil
+                        if case .failure = completion { self.scheduleTransientSyncRetry() }
+                    },
+                    receiveValue: { [weak self] counters in
+                        guard let self else { return }
+                        self.cloudCounters = Dictionary(uniqueKeysWithValues: counters.compactMap {
+                            guard $0.latestCounter >= 0,
+                                  $0.latestCounter <= 9_007_199_254_740_991,
+                                  $0.latestCounter.rounded() == $0.latestCounter else { return nil }
+                            return ($0.actorId, UInt64($0.latestCounter))
+                        })
+                        self.wakeSync()
+                    }
+                )
+        }
+        _ = store
         wakeSync()
         if safetyPollTask == nil {
             safetyPollTask = Task { [weak self] in
@@ -356,84 +448,26 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        if eventLoopTask == nil {
-            let generation = UUID()
-            eventLoopGeneration = generation
-            eventLoopTask = Task { [weak self] in
-                await self?.runEventSocketLoop(generation: generation)
-                if self?.eventLoopGeneration == generation { self?.eventLoopTask = nil }
-            }
-        }
     }
 
     private func stopForegroundNetworking() {
         syncRequested = false
         exchangeGeneration = UUID()
-        eventLoopGeneration = UUID()
         safetyPollTask?.cancel()
         safetyPollTask = nil
-        eventLoopTask?.cancel()
-        eventLoopTask = nil
+        changesSubscription?.cancel()
+        changesSubscription = nil
         exchangeTask?.cancel()
         exchangeTask = nil
-        connectionTask?.cancel()
-        connectionTask = nil
         transientSyncRetryTask?.cancel()
         transientSyncRetryTask = nil
         accountEnrollmentTask?.cancel()
         accountEnrollmentTask = nil
+        cloudAuthenticationTask?.cancel()
+        cloudAuthenticationTask = nil
+        cloudAuthenticationRetryTask?.cancel()
+        cloudAuthenticationRetryTask = nil
         connectingAccount = false
-        eventSocket?.cancel(with: .goingAway, reason: nil)
-        eventSocket = nil
-    }
-
-    /// One ticket-authenticated socket carries state-free hints. Long-lived
-    /// environment credentials never enter the upgrade. The supervisor owns
-    /// the 1/2/4/8/16-second transient ladder; offline and blocked states own no
-    /// timer at all.
-    private func runEventSocketLoop(generation: UUID) async {
-        var currentSocket: URLSessionWebSocketTask?
-        while !Task.isCancelled, isForeground, isOnline, auth.signedIn,
-              eventLoopGeneration == generation {
-            do {
-                let transport = try await ensureTransport()
-                let socket = try await transport.eventSocket()
-                socket.maximumMessageSize = 1_024
-                currentSocket = socket
-                eventSocket = socket
-                socket.resume()
-                // The origin intentionally sends no initial event. Drain any
-                // operation or chunk that failed before this connection.
-                wakeSync()
-                while !Task.isCancelled, isForeground, eventLoopGeneration == generation {
-                    let message = try await socket.receive()
-                    switch message {
-                    case let .string(value):
-                        guard value.utf8.count <= 1_024 else { throw TransportError.invalidResponse }
-                    case let .data(value):
-                        guard value.count <= 1_024 else { throw TransportError.invalidResponse }
-                    @unknown default:
-                        throw TransportError.invalidResponse
-                    }
-                    wakeSync()
-                }
-            } catch is CancellationError {
-                currentSocket?.cancel(with: .goingAway, reason: nil)
-                return
-            } catch {
-                currentSocket?.cancel(with: .goingAway, reason: nil)
-                currentSocket = nil
-                if eventLoopGeneration == generation { eventSocket = nil }
-                if shouldBlockForCredentialOrConfiguration(error) { return }
-                if isLeaseRejection(error) { invalidateEnvironmentSession() }
-                let command = supervisor.transientFailure(at: Date())
-                guard case let .connect(after: delay) = command else { return }
-                do { try await Task.sleep(for: .seconds(delay)) }
-                catch { return }
-            }
-        }
-        currentSocket?.cancel(with: .goingAway, reason: nil)
-        if eventLoopGeneration == generation { eventSocket = nil }
     }
 
     private func performSyncOnce() async -> Bool {
@@ -448,58 +482,131 @@ final class AppModel: ObservableObject {
 
         do {
             let key = try workspaceKey(workspaceId: workspaceId)
-            let transport = try await ensureTransport()
 
-            // Chunks are uploaded before their manifest operation. Confirmed
-            // content hashes are remembered for this process so a steady-state
-            // safety poll does not re-probe every attachment.
-            let moreUploads = try await uploadMissingChunks(
-                store: store,
-                transport: transport
-            )
+            // R2 objects are uploaded before the operation containing their
+            // manifest. Confirmed hashes are memoized for this foreground run.
+            let moreUploads = try await uploadMissingChunks(store: store, workspaceId: workspaceId)
             if moreUploads {
                 syncRequested = true
                 return true
             }
 
-            let payload = try await store.outboundPayload()
-            let envelope = try SyncCrypto.seal(
-                JSONEncoder().encode(payload),
-                key: key,
-                aad: SyncCrypto.payloadAAD(workspaceId: workspaceId, schemaVersion: payload.schemaVersion)
-            )
-            let response = try await transport.exchange(
-                envelope: envelope,
-                deviceId: library.actorId
-            )
-            let plaintext = try SyncCrypto.open(
-                response,
-                key: key,
-                aad: SyncCrypto.payloadAAD(workspaceId: workspaceId)
-            )
-            let incoming = try JSONDecoder().decode(SyncPayload.self, from: plaintext)
-            _ = try await store.applyRemotePayload(incoming)
+            let actorId = library.actorId
+            if let accepted = cloudCounters[actorId], accepted > 0 {
+                _ = try await store.applyRemotePayload(
+                    SyncPayload(
+                        workspaceId: workspaceId,
+                        frontier: VersionVector([actorId: accepted]),
+                        operations: []
+                    )
+                )
+            }
+
+            var limit = 256
+            var outbound = try await store.outboundPayload(limit: limit)
+            var outboundMayHaveMore = false
+            while !outbound.operations.isEmpty {
+                let encoded = try JSONEncoder().encode(outbound)
+                if encoded.count <= 550_000 {
+                    let first = outbound.operations.first!.dot.counter
+                    let last = outbound.operations.last!.dot.counter
+                    let batch = CloudBatch(
+                        actorId: actorId,
+                        firstCounter: first,
+                        lastCounter: last,
+                        envelope: try SyncCrypto.seal(
+                            encoded,
+                            key: key,
+                            aad: SyncCrypto.batchAAD(
+                                workspaceId: workspaceId,
+                                actorId: actorId,
+                                firstCounter: first,
+                                lastCounter: last
+                            )
+                        )
+                    )
+                    let accepted = try await cloud.push(workspaceId: workspaceId, batch: batch)
+                    guard accepted >= last else { throw ConvexSyncError.invalidResponse }
+                    cloudCounters[actorId] = accepted
+                    _ = try await store.applyRemotePayload(
+                        SyncPayload(
+                            workspaceId: workspaceId,
+                            frontier: VersionVector([actorId: accepted]),
+                            operations: []
+                        )
+                    )
+                    outboundMayHaveMore = outbound.operations.count == limit
+                    break
+                }
+                guard limit > 1 else { throw ConvexSyncError.invalidResponse }
+                limit = max(1, limit / 2)
+                outbound = try await store.outboundPayload(limit: limit)
+            }
+
+            let frontier = await store.frontier()
+            let remoteIsAhead = cloudCounters.contains { actor, counter in
+                counter > frontier.counters[actor, default: 0]
+            }
+            let batches: [CloudBatch]
+            if remoteIsAhead {
+                batches = try await cloud.pull(
+                    workspaceId: workspaceId,
+                    actorId: actorId,
+                    frontier: frontier
+                )
+            } else {
+                batches = []
+            }
+            for batch in batches {
+                let plaintext = try SyncCrypto.open(
+                    batch.envelope,
+                    key: key,
+                    aad: SyncCrypto.batchAAD(
+                        workspaceId: workspaceId,
+                        actorId: batch.actorId,
+                        firstCounter: batch.firstCounter,
+                        lastCounter: batch.lastCounter
+                    )
+                )
+                guard plaintext.count <= 550_000 else { throw ConvexSyncError.invalidResponse }
+                let incoming = try JSONDecoder().decode(SyncPayload.self, from: plaintext)
+                guard incoming.operations.first?.dot.counter == batch.firstCounter,
+                      incoming.operations.last?.dot.counter == batch.lastCounter,
+                      incoming.operations.allSatisfy({ $0.dot.actorId == batch.actorId }) else {
+                    throw ConvexSyncError.invalidResponse
+                }
+                _ = try await store.applyRemotePayload(incoming)
+            }
 
             let missingBeforeDownload = await store.missingChunkHashes()
-            for hash in missingBeforeDownload.prefix(256) {
-                let chunk = try await transport.downloadChunk(hash: hash)
-                try await store.saveRemoteChunk(hash: hash, envelope: chunk, key: key)
-                confirmedRemoteChunks.insert(hash)
+            let missingBatch = Array(missingBeforeDownload.prefix(64))
+            if !missingBatch.isEmpty {
+                let downloads = try await cloud.downloadURLs(
+                    workspaceId: workspaceId,
+                    hashes: missingBatch
+                )
+                for download in downloads {
+                    guard let url = URL(string: download.url) else {
+                        throw ConvexSyncError.invalidResponse
+                    }
+                    let chunk = try await cloud.download(from: url)
+                    try await store.saveRemoteChunk(hash: download.hash, envelope: chunk, key: key)
+                    confirmedRemoteChunks.insert(download.hash)
+                }
             }
             await refreshLibrary()
             let hasMissingDownloads = !(await store.missingChunkHashes()).isEmpty
             let hasMore = moreUploads ||
-                incoming.operations.count == 2_000 ||
+                batches.count == 12 ||
+                outboundMayHaveMore ||
                 library.pendingOperationCount > 0 ||
                 hasMissingDownloads
             syncRequested = syncRequested || hasMore
             syncState = .synced
+            retryIndex = 0
             return true
         } catch {
-            if isLeaseRejection(error) { invalidateEnvironmentSession() }
-            if !shouldBlockForCredentialOrConfiguration(error) {
-                scheduleTransientSyncRetry()
-            }
+            scheduleTransientSyncRetry()
             syncState = .waitingForDevice
             return false
         }
@@ -507,8 +614,9 @@ final class AppModel: ObservableObject {
 
     private func scheduleTransientSyncRetry() {
         guard transientSyncRetryTask == nil, isOnline, isForeground else { return }
-        let command = supervisor.transientFailure(at: Date())
-        guard case let .connect(after: delay) = command else { return }
+        let ladder: [TimeInterval] = [1, 2, 4, 8, 16]
+        let delay = ladder[min(retryIndex, ladder.count - 1)]
+        retryIndex = min(retryIndex + 1, ladder.count - 1)
         transientSyncRetryTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) }
             catch { return }
@@ -518,174 +626,32 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Probes at most 4,096 not-yet-confirmed hashes and uploads at most 256
-    /// chunks per exchange. Successful probes are memoized, so pagination
-    /// advances instead of repeatedly starting from the same hash batch.
+    /// One Convex action checks at most 64 R2 objects and returns short-lived
+    /// upload URLs only for missing hashes. Bytes go straight to R2.
     private func uploadMissingChunks(
         store: LocalSyncStore,
-        transport: SyncTransport
+        workspaceId: String
     ) async throws -> Bool {
-        let candidates = await store.availableChunkHashes().filter {
+        let candidates = await store.pendingChunkHashes().filter {
             !confirmedRemoteChunks.contains($0)
         }
         guard !candidates.isEmpty else { return false }
 
-        let batchSize = 256
-        let maxBatches = 16
-        var uploadBudget = 256
-        var processed = 0
-        for start in stride(from: 0, to: candidates.count, by: batchSize).prefix(maxBatches) {
-            let end = min(start + batchSize, candidates.count)
-            let batch = Array(candidates[start..<end])
-            let missing = try await transport.missingChunks(hashes: batch)
-            guard missing.isSubset(of: Set(batch)) else { throw TransportError.invalidResponse }
-            confirmedRemoteChunks.formUnion(batch.filter { !missing.contains($0) })
-
-            for hash in batch where missing.contains(hash) && uploadBudget > 0 {
-                try await transport.uploadChunk(
-                    hash: hash,
-                    sealedChunk: try await store.sealedChunk(hash: hash)
-                )
-                confirmedRemoteChunks.insert(hash)
-                uploadBudget -= 1
+        let batch = Array(candidates.prefix(64))
+        let uploads = try await cloud.prepareUploads(workspaceId: workspaceId, hashes: batch)
+        guard Set(uploads.map(\.hash)) == Set(batch) else {
+            throw ConvexSyncError.invalidResponse
+        }
+        for upload in uploads {
+            if !upload.exists {
+                guard let encoded = upload.url, let url = URL(string: encoded) else {
+                    throw ConvexSyncError.invalidResponse
+                }
+                try await cloud.upload(try await store.sealedChunk(hash: upload.hash), to: url)
             }
-            processed = end
-            if uploadBudget == 0 { break }
+            confirmedRemoteChunks.insert(upload.hash)
         }
-        return processed < candidates.count || candidates.contains {
-            !confirmedRemoteChunks.contains($0)
-        }
-    }
-
-    private func ensureTransport() async throws -> SyncTransport {
-        guard let environmentId else { throw AppConnectionError.missingEnvironment }
-        if let session = environmentSession,
-           let transport,
-           session.environmentId == environmentId,
-           session.isHealthy(at: Date()) {
-            supervisor.connected(
-                leaseExpiresAt: session.expiresAt,
-                at: environmentConnectedAt ?? Date()
-            )
-            return transport
-        }
-        if let connectionTask { return try await connectionTask.value }
-
-        let task = Task { @MainActor [weak self] () throws -> SyncTransport in
-            guard let self else { throw CancellationError() }
-            return try await self.connectEnvironment(environmentId: environmentId)
-        }
-        connectionTask = task
-        do {
-            let transport = try await task.value
-            connectionTask = nil
-            return transport
-        } catch {
-            connectionTask = nil
-            throw error
-        }
-    }
-
-    private func connectEnvironment(environmentId: String) async throws -> SyncTransport {
-        let workOSToken: String
-        do { workOSToken = try await auth.accessToken() }
-        catch { throw AppConnectionError.authentication }
-
-        let relay = try relay()
-        let connection: EnvironmentConnection
-        do {
-            connection = try await relay.connect(
-                environmentId: environmentId,
-                workOSAccessToken: workOSToken
-            )
-        } catch RelayError.http(let status) where status == 401 || status == 403 {
-            throw AppConnectionError.authentication
-        }
-        let session = try await relay.bootstrap(connection)
-        let transport = try SyncTransport(environment: session, signer: try signer())
-        try persist(environment: session)
-        environmentSession = session
-        environmentConnectedAt = Date()
-        self.transport = transport
-        supervisor.connected(leaseExpiresAt: session.expiresAt, at: Date())
-        return transport
-    }
-
-    private func signer() throws -> DPoPSigner {
-        if let dpopSigner { return dpopSigner }
-        let loaded = try DPoPSigner.loadOrCreate(
-            keychain: keychain,
-            account: configuration.keychainAccount("relay-dpop-p256-key")
-        )
-        dpopSigner = loaded
-        return loaded
-    }
-
-    private func relay() throws -> RelayClient {
-        if let relayClient { return relayClient }
-        let client = try RelayClient(
-            baseURL: configuration.relayBaseURL,
-            endpointHostSuffix: configuration.syncEndpointHostSuffix,
-            signer: try signer()
-        )
-        relayClient = client
-        return client
-    }
-
-    private func persist(environment: EnvironmentSession) throws {
-        try keychain.save(
-            Data(environment.environmentId.utf8),
-            account: configuration.keychainAccount("environment-id")
-        )
-        try keychain.save(
-            Data(environment.endpoint.httpBaseURL.absoluteString.utf8),
-            account: configuration.keychainAccount("environment-http-url")
-        )
-        try keychain.save(
-            Data(environment.endpoint.wsBaseURL.absoluteString.utf8),
-            account: configuration.keychainAccount("environment-ws-url")
-        )
-    }
-
-    private func invalidateEnvironmentSession() {
-        environmentSession = nil
-        environmentConnectedAt = nil
-        transport = nil
-        connectionTask?.cancel()
-        connectionTask = nil
-        supervisor.invalidateLease()
-    }
-
-    @discardableResult
-    private func shouldBlockForCredentialOrConfiguration(_ error: Error) -> Bool {
-        if case AppConnectionError.authentication = error {
-            supervisor.block(.authentication)
-            message = "Sign in again to reconnect sync."
-            auth.signOut()
-            return true
-        }
-        switch error {
-        case RelayError.invalidConfiguration,
-             RelayError.invalidEnvironment,
-             RelayError.keyBindingMismatch,
-             RelayError.untrustedEndpoint:
-            supervisor.block(.configuration)
-            message = "Sync relay configuration could not be verified."
-            return true
-        default:
-            return false
-        }
-    }
-
-    private func isLeaseRejection(_ error: Error) -> Bool {
-        switch error {
-        case TransportError.expiredLease,
-             TransportError.http(401),
-             TransportError.http(403):
-            return true
-        default:
-            return false
-        }
+        return candidates.count > batch.count
     }
 
     private func workspaceKey(workspaceId: String) throws -> WorkspaceKey {
@@ -704,7 +670,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             var retryDelay: TimeInterval = 0
             while !Task.isCancelled, self.isForeground, self.isOnline, self.auth.signedIn,
-                  (self.workspaceId == nil || self.environmentId == nil || self.store == nil) {
+                  (self.workspaceId == nil || self.store == nil) {
                 if retryDelay > 0 {
                     do { try await Task.sleep(for: .seconds(retryDelay)) }
                     catch { break }
@@ -716,9 +682,8 @@ final class AppModel: ObservableObject {
                     self.syncState = .waitingForDevice
                     self.message = "Open Clippy on your Mac and sign in there. This iPhone will connect automatically."
                 } catch {
-                    if self.shouldBlockForCredentialOrConfiguration(error) { break }
                     self.syncState = .waitingForDevice
-                    self.message = "Waiting for your Mac to come online."
+                    self.message = "Waiting for secure account enrollment."
                 }
                 retryDelay = retryDelay == 0 ? 1 : min(retryDelay * 2, 30)
             }
@@ -728,29 +693,45 @@ final class AppModel: ObservableObject {
     }
 
     private func enrollSignedInAccount() async throws {
+        if try await resumePendingEnrollmentAcceptance() { return }
         syncState = .syncing
-        let accessToken = try await auth.accessToken()
-        let relay = try relay()
-        let environments = try await relay.environments(workOSAccessToken: accessToken)
-        guard let selected = Self.selectEnvironment(
-            preferredId: environmentId,
-            from: environments
-        ) else { throw AccountEnrollmentError.noEnvironment }
-        let connection = try await relay.connect(
-            environmentId: selected.id,
-            workOSAccessToken: accessToken
-        )
-        let session = try await relay.bootstrap(connection)
-        let transport = try SyncTransport(environment: session, signer: try signer())
         let enrollment = SyncCrypto.AccountEnrollment()
-        let response = try await transport.enroll(request: enrollment.request)
+        let enrollmentId = UUID().uuidString.lowercased()
+        let requested = try await cloud.requestEnrollment(
+            enrollmentId: enrollmentId,
+            actorId: deviceActorId,
+            deviceName: "Clippy on this iPhone",
+            phonePublicKey: enrollment.request.phonePublicKey
+        )
+        guard requested.state != "noWorkspace" else {
+            throw AccountEnrollmentError.noEnvironment
+        }
+        guard requested.state != "alreadyEnrolled" else {
+            throw AccountEnrollmentError.invalidResponse
+        }
+
+        var response: AccountEnrollmentResponse?
+        var delay: TimeInterval = 1
+        while !Task.isCancelled, response == nil {
+            let status = try await cloud.enrollmentStatus(
+                enrollmentId: enrollmentId,
+                actorId: deviceActorId
+            )
+            if status?.state == "granted" {
+                response = status?.response
+                break
+            }
+            if status?.state == "expired" { throw AccountEnrollmentError.invalidResponse }
+            try await Task.sleep(for: .seconds(delay))
+            delay = min(delay * 2, 15)
+        }
+        guard let response else { throw CancellationError() }
         let offer = response.offer
-        let expectedWorkspace = selected.workspaceId ?? selected.id
-        guard offer.workspaceId == expectedWorkspace,
+        guard offer.workspaceId == requested.workspaceId,
               offer.workosIssuer == configuration.workOSIssuer.absoluteString,
               offer.workosAudience == configuration.workOSClientID,
-              offer.tunnelUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
-                session.endpoint.httpBaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+              offer.syncUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
+                configuration.convexURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
               UInt64(Date().timeIntervalSince1970 * 1_000) <= offer.expiresAtMs else {
             throw AccountEnrollmentError.invalidResponse
         }
@@ -766,33 +747,53 @@ final class AppModel: ObservableObject {
             Data(offer.workspaceId.utf8),
             account: configuration.keychainAccount("workspace-id")
         )
-        try persist(environment: session)
-        workspaceId = offer.workspaceId
-        environmentId = selected.id
-        environmentSession = session
-        environmentConnectedAt = Date()
-        self.transport = transport
-        supervisor.connected(leaseExpiresAt: session.expiresAt, at: Date())
-        try await installReplica(workspaceId: offer.workspaceId)
+        try keychain.save(
+            Data(enrollmentId.utf8),
+            account: configuration.keychainAccount("pending-enrollment-id")
+        )
+        try await finishEnrollmentAcceptance(
+            enrollmentId: enrollmentId,
+            workspaceId: offer.workspaceId
+        )
+    }
+
+    private func resumePendingEnrollmentAcceptance() async throws -> Bool {
+        guard let enrollmentData = try keychain.load(
+            account: configuration.keychainAccount("pending-enrollment-id")
+        ), let enrollmentId = String(data: enrollmentData, encoding: .utf8),
+           let workspaceData = try keychain.load(
+            account: configuration.keychainAccount("workspace-id")
+           ), let workspace = String(data: workspaceData, encoding: .utf8),
+           UUID(uuidString: enrollmentId) != nil, UUID(uuidString: workspace) != nil else {
+            return false
+        }
+        try await finishEnrollmentAcceptance(enrollmentId: enrollmentId, workspaceId: workspace)
+        return true
+    }
+
+    private func finishEnrollmentAcceptance(
+        enrollmentId: String,
+        workspaceId acceptedWorkspaceId: String
+    ) async throws {
+        let acceptedWorkspace = try await cloud.acceptEnrollment(
+            enrollmentId: enrollmentId,
+            actorId: deviceActorId
+        )
+        guard acceptedWorkspace == acceptedWorkspaceId else {
+            throw AccountEnrollmentError.invalidResponse
+        }
+        try keychain.delete(account: configuration.keychainAccount("pending-enrollment-id"))
+        workspaceId = acceptedWorkspaceId
+        if store == nil {
+            try await installReplica(workspaceId: acceptedWorkspaceId)
+        }
         syncState = .synced
         message = nil
         startForegroundNetworking()
     }
-
-    private static func selectEnvironment(
-        preferredId: String?,
-        from environments: [RelayEnvironment]
-    ) -> RelayEnvironment? {
-        if let preferredId,
-           let preferred = environments.first(where: { $0.id == preferredId }) {
-            return preferred
-        }
-        return environments.first
-    }
 }
 
 private enum AccountEnrollmentError: Error { case noEnvironment, invalidResponse }
-private enum AppConnectionError: Error { case authentication, missingEnvironment }
 
 extension Notification.Name {
     static let clippySyncForegrounded = Notification.Name("clippy-sync-foregrounded")

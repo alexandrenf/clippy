@@ -147,7 +147,7 @@ public actor JWTVerifier {
         }
         switch kind {
         case .access:
-            guard claims.clientId == audience else {
+            guard claims.aud?.values.contains(audience) == true else {
                 throw JWTVerificationError.wrongAudience
             }
         case .id:
@@ -232,7 +232,6 @@ private struct JWTHeader: Decodable, Sendable {
 private struct JWTClaims: Decodable, Sendable {
     let iss: String
     let aud: JWTAudience?
-    let clientId: String?
     let exp: TimeInterval
     let sub: String
     let nonce: String?
@@ -240,7 +239,6 @@ private struct JWTClaims: Decodable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case iss, aud, exp, sub, nonce
-        case clientId = "client_id"
         case orgId = "org_id"
     }
 }

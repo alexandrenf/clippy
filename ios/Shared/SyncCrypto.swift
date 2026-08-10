@@ -4,7 +4,7 @@ import Foundation
 public struct PairingOffer: Codable, Equatable, Sendable {
     public let version: UInt8
     public let workspaceId: String
-    public let tunnelUrl: String
+    public let syncUrl: String
     public let workosIssuer: String
     public let workosAudience: String
     public let macPublicKey: String
@@ -61,7 +61,7 @@ public struct SealedEnvelope: Codable, Equatable, Sendable {
 public enum SyncCrypto {
     /// Device-side enrollment for an already authenticated account. The private
     /// key never leaves this device; the Mac wraps the workspace key to its
-    /// public counterpart after verifying the WorkOS/DPoP session.
+    /// public counterpart after verifying the same WorkOS account through Convex.
     public struct AccountEnrollment: Sendable {
         public let request: AccountEnrollmentRequest
         private let privateKey: Curve25519.KeyAgreement.PrivateKey
@@ -103,6 +103,19 @@ public enum SyncCrypto {
         syncAAD(fields: ["clippy-sync-payload", String(schemaVersion), workspaceId])
     }
 
+    public static func batchAAD(
+        workspaceId: String,
+        actorId: String,
+        firstCounter: UInt64,
+        lastCounter: UInt64,
+        schemaVersion: UInt16 = 1
+    ) -> Data {
+        syncAAD(fields: [
+            "clippy-sync-batch", String(schemaVersion), workspaceId, actorId,
+            String(firstCounter), String(lastCounter)
+        ])
+    }
+
     public static func chunkAAD(workspaceId: String, hash: String, schemaVersion: UInt16 = 1) -> Data {
         syncAAD(fields: ["clippy-sync-chunk", String(schemaVersion), workspaceId, hash])
     }
@@ -141,7 +154,7 @@ public enum SyncCrypto {
         principal: AuthenticatedPrincipal
     ) -> Data {
         let fields = [
-            String(offer.version), offer.workspaceId, offer.tunnelUrl,
+            String(offer.version), offer.workspaceId, offer.syncUrl,
             offer.workosIssuer, offer.workosAudience, String(offer.expiresAtMs), offer.macPublicKey,
             phonePublicKey, principal.subject, principal.organizationId ?? ""
         ]

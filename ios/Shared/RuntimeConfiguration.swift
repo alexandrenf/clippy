@@ -7,8 +7,7 @@ public struct RuntimeConfiguration: Sendable {
     public let workOSIssuer: URL
     public let workOSClientID: String
     public let redirectURI: URL
-    public let relayBaseURL: URL
-    public let syncEndpointHostSuffix: String
+    public let convexURL: URL
 
     public init(bundle: Bundle = .main) throws {
         guard let environment = Environment(rawValue: try bundle.required("SYNC_ENVIRONMENT")) else {
@@ -22,14 +21,12 @@ public struct RuntimeConfiguration: Sendable {
             throw ConfigurationError.invalidRedirect
         }
         redirectURI = redirect
-        relayBaseURL = try Self.httpsURL(bundle.required("RELAY_BASE_URL"))
-        syncEndpointHostSuffix = try Self.hostSuffix(
-            bundle.required("SYNC_ENDPOINT_HOST_SUFFIX")
-        )
+        convexURL = try Self.convexURL(bundle.required("CONVEX_URL"))
     }
 
-    /// Keychain account names are environment-scoped so a staging login or
-    /// workspace key can never be consumed by a production build.
+    /// Keychain account names are environment-scoped so a staging workspace
+    /// key can never be consumed by a production build. OAuth tokens use the
+    /// separate app-private OAuthTokenStore and never touch Keychain.
     public func keychainAccount(_ name: String) -> String {
         "\(environment.rawValue):\(name)"
     }
@@ -42,19 +39,14 @@ public struct RuntimeConfiguration: Sendable {
         return url
     }
 
-    private static func hostSuffix(_ value: String) throws -> String {
-        let normalized = value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        guard !normalized.isEmpty,
-              normalized.unicodeScalars.allSatisfy({
-                  CharacterSet.alphanumerics.contains($0) || $0 == "." || $0 == "-"
-              }),
-              normalized.contains(".") else {
-            throw ConfigurationError.invalidHostSuffix
+    private static func convexURL(_ value: String) throws -> URL {
+        let url = try httpsURL(value)
+        guard url.host?.hasSuffix(".convex.cloud") == true,
+              url.path.isEmpty || url.path == "/",
+              url.query == nil, url.fragment == nil else {
+            throw ConfigurationError.invalidConvexURL
         }
-        return normalized
+        return url
     }
 }
 
@@ -63,7 +55,7 @@ public enum ConfigurationError: Error, Equatable {
     case invalidEnvironment
     case invalidRedirect
     case insecureURL
-    case invalidHostSuffix
+    case invalidConvexURL
 }
 
 private extension Bundle {

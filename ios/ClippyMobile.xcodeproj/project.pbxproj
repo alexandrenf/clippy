@@ -12,19 +12,18 @@
 		171AA195B5BCCC5AEA827FC7 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA32AAFC3DA08B03B461299 /* KeychainStore.swift */; };
 		33309251DD9CDDA49C5AC1D9 /* AuthController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E49E4A4F7604082AA371A24 /* AuthController.swift */; };
 		354EB7CBCCFC6B4614BCD9F1 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C6B36AB2D0E9F5C061F1D28 /* ContentView.swift */; };
-		529498EE7EBDD7E1F948CB57 /* SyncTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A078C5FA841015F02E4FE8CA /* SyncTransport.swift */; };
-		54726FDE6D3B72545580EAAC /* DPoP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5248DE7ECD9533E03B6C160C /* DPoP.swift */; };
+		586F81AB69D3A653329DFABA /* ConvexMobile in Frameworks */ = {isa = PBXBuildFile; productRef = F77273CD6AD73F81B45F14DB /* ConvexMobile */; };
 		5E35B000A6F919341A3F6004 /* BackoffSchedule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83429C0010782B7913E319AF /* BackoffSchedule.swift */; };
 		638DF6374BB871643A546343 /* AuthTokenVerifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E10A2E12C11A5F3AF7DD160 /* AuthTokenVerifier.swift */; };
+		7822E255735EF0EAC9596C7B /* ConvexSyncClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA4F5D8DC33FC62DC1E70CFF /* ConvexSyncClient.swift */; };
 		7BD4F30F1AE5A2AD9DEF580F /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A474472911DD59C1BE8A679 /* AppModel.swift */; };
 		7FB8083832AEB09750BBE53C /* ClippyMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 162A13242072BDAEAAEBABE2 /* ClippyMobileApp.swift */; };
 		85D142602E3CE4F305A4B0A6 /* RuntimeConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2CE8EE76A6569661DB210B8 /* RuntimeConfiguration.swift */; };
-		864CEF3C95D12A7288E43F97 /* RelayClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C766D379F4A4DC8C31B7A8B /* RelayClient.swift */; };
 		88E6C4D608E2F21A977787ED /* SyncModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A9C09AA1ED753ADDCFBB0AB /* SyncModel.swift */; };
 		8FD3B968F6E33E18C122B6CD /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 209C06FFBA5D75AD02B0C082 /* Assets.xcassets */; };
 		9D24B73909C6E00EBC376CD5 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 822E4DA847070C9F56755B48 /* LaunchScreen.storyboard */; };
 		A31789AA8640CA642C73D8E8 /* LocalSyncStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F612398EC4C7AAE3170681F /* LocalSyncStore.swift */; };
-		D03192F00F5494421608A804 /* ConnectionSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB00C1B9E2A357599D8EF4D /* ConnectionSupervisor.swift */; };
+		E151D72BB144C667C25735F3 /* OAuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EFFB13E0B6D4A20DFAB6047 /* OAuthTokenStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -33,24 +32,33 @@
 		1788D177DBA302D7E7E80344 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		209C06FFBA5D75AD02B0C082 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2E10A2E12C11A5F3AF7DD160 /* AuthTokenVerifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTokenVerifier.swift; sourceTree = "<group>"; };
-		5248DE7ECD9533E03B6C160C /* DPoP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DPoP.swift; sourceTree = "<group>"; };
+		3EFFB13E0B6D4A20DFAB6047 /* OAuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthTokenStore.swift; sourceTree = "<group>"; };
 		5C6B36AB2D0E9F5C061F1D28 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		5F612398EC4C7AAE3170681F /* LocalSyncStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSyncStore.swift; sourceTree = "<group>"; };
-		7C766D379F4A4DC8C31B7A8B /* RelayClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayClient.swift; sourceTree = "<group>"; };
 		822E4DA847070C9F56755B48 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		83429C0010782B7913E319AF /* BackoffSchedule.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackoffSchedule.swift; sourceTree = "<group>"; };
 		8A474472911DD59C1BE8A679 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
 		8E49E4A4F7604082AA371A24 /* AuthController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthController.swift; sourceTree = "<group>"; };
 		955147A12F4D5A90C8B9579D /* FileManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileManifest.swift; sourceTree = "<group>"; };
 		9A9C09AA1ED753ADDCFBB0AB /* SyncModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncModel.swift; sourceTree = "<group>"; };
-		A078C5FA841015F02E4FE8CA /* SyncTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncTransport.swift; sourceTree = "<group>"; };
 		A191409BC69DC33E5541854B /* Staging.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Staging.xcconfig; sourceTree = "<group>"; };
 		A2CE8EE76A6569661DB210B8 /* RuntimeConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RuntimeConfiguration.swift; sourceTree = "<group>"; };
 		A43FCCDB0D018C84C483A0F2 /* SyncCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCrypto.swift; sourceTree = "<group>"; };
-		AFB00C1B9E2A357599D8EF4D /* ConnectionSupervisor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionSupervisor.swift; sourceTree = "<group>"; };
+		DA4F5D8DC33FC62DC1E70CFF /* ConvexSyncClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvexSyncClient.swift; sourceTree = "<group>"; };
 		EE8F326E0A29009C66F21F6E /* Production.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Production.xcconfig; sourceTree = "<group>"; };
 		EFA32AAFC3DA08B03B461299 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B51BED74BE05E6846C81F922 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				586F81AB69D3A653329DFABA /* ConvexMobile in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		921F485E36BCC798F4464F73 /* Products */ = {
@@ -99,16 +107,14 @@
 			children = (
 				2E10A2E12C11A5F3AF7DD160 /* AuthTokenVerifier.swift */,
 				83429C0010782B7913E319AF /* BackoffSchedule.swift */,
-				AFB00C1B9E2A357599D8EF4D /* ConnectionSupervisor.swift */,
-				5248DE7ECD9533E03B6C160C /* DPoP.swift */,
+				DA4F5D8DC33FC62DC1E70CFF /* ConvexSyncClient.swift */,
 				955147A12F4D5A90C8B9579D /* FileManifest.swift */,
 				EFA32AAFC3DA08B03B461299 /* KeychainStore.swift */,
 				5F612398EC4C7AAE3170681F /* LocalSyncStore.swift */,
-				7C766D379F4A4DC8C31B7A8B /* RelayClient.swift */,
+				3EFFB13E0B6D4A20DFAB6047 /* OAuthTokenStore.swift */,
 				A2CE8EE76A6569661DB210B8 /* RuntimeConfiguration.swift */,
 				A43FCCDB0D018C84C483A0F2 /* SyncCrypto.swift */,
 				9A9C09AA1ED753ADDCFBB0AB /* SyncModel.swift */,
-				A078C5FA841015F02E4FE8CA /* SyncTransport.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -122,6 +128,7 @@
 			buildPhases = (
 				46C7C633C061F7318F49C107 /* Sources */,
 				9FA68926D8F810611A2CBAE3 /* Resources */,
+				B51BED74BE05E6846C81F922 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -129,6 +136,7 @@
 			);
 			name = ClippyMobile;
 			packageProductDependencies = (
+				F77273CD6AD73F81B45F14DB /* ConvexMobile */,
 			);
 			productName = ClippyMobile;
 			productReference = 11E9C47108DA0EC9D37AD79B /* ClippyMobile.app */;
@@ -158,6 +166,9 @@
 			);
 			mainGroup = B5C85B6C1B08CCE8BCFD7924;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				B363623A6CC808D1C825C199 /* XCRemoteSwiftPackageReference "convex-swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 921F485E36BCC798F4464F73 /* Products */;
 			projectDirPath = "";
@@ -190,17 +201,15 @@
 				638DF6374BB871643A546343 /* AuthTokenVerifier.swift in Sources */,
 				5E35B000A6F919341A3F6004 /* BackoffSchedule.swift in Sources */,
 				7FB8083832AEB09750BBE53C /* ClippyMobileApp.swift in Sources */,
-				D03192F00F5494421608A804 /* ConnectionSupervisor.swift in Sources */,
 				354EB7CBCCFC6B4614BCD9F1 /* ContentView.swift in Sources */,
-				54726FDE6D3B72545580EAAC /* DPoP.swift in Sources */,
+				7822E255735EF0EAC9596C7B /* ConvexSyncClient.swift in Sources */,
 				1713BAD0BC2F0E4403CF7C50 /* FileManifest.swift in Sources */,
 				171AA195B5BCCC5AEA827FC7 /* KeychainStore.swift in Sources */,
 				A31789AA8640CA642C73D8E8 /* LocalSyncStore.swift in Sources */,
-				864CEF3C95D12A7288E43F97 /* RelayClient.swift in Sources */,
+				E151D72BB144C667C25735F3 /* OAuthTokenStore.swift in Sources */,
 				85D142602E3CE4F305A4B0A6 /* RuntimeConfiguration.swift in Sources */,
 				027233FA148FCEAFEDA49B23 /* SyncCrypto.swift in Sources */,
 				88E6C4D608E2F21A977787ED /* SyncModel.swift in Sources */,
-				529498EE7EBDD7E1F948CB57 /* SyncTransport.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -288,6 +297,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -353,6 +363,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -411,6 +422,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -513,6 +525,7 @@
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -567,6 +580,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B363623A6CC808D1C825C199 /* XCRemoteSwiftPackageReference "convex-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/get-convex/convex-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.8.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		F77273CD6AD73F81B45F14DB /* ConvexMobile */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B363623A6CC808D1C825C199 /* XCRemoteSwiftPackageReference "convex-swift" */;
+			productName = ConvexMobile;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = BEE0F6DD46F37773CB8B97DC /* Project object */;
 }

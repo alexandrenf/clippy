@@ -199,6 +199,25 @@ export default function SettingsSheet({
           </button>
           {syncConnected && <span className="settings-hint">Account sync is ready</span>}
         </div>
+        {syncConnected && (
+          <div className="settings-actions">
+            <button
+              className="settings-reset"
+              disabled={signInBusy}
+              onClick={() => {
+                if (!window.confirm("Sign out of Clippy sync on this Mac? Your local notes will stay here.")) return;
+                setSignInBusy(true);
+                setPairingError(null);
+                void api.signOutSync(syncEnvironment)
+                  .then(() => setSyncConnected(false))
+                  .catch((cause) => setPairingError(cause instanceof Error ? cause.message : String(cause)))
+                  .finally(() => setSignInBusy(false));
+              }}
+            >
+              Sign out on this Mac
+            </button>
+          </div>
+        )}
         {pairingError && <div className="settings-error" role="alert">{pairingError}</div>}
         <div className="settings-subtitle">Agent access</div>
         <p className="settings-hint">

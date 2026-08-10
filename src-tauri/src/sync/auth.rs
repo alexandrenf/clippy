@@ -73,12 +73,12 @@ impl WorkOsVerifier {
             .map_err(|_| AuthError::InvalidToken)?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.set_issuer(&[&self.issuer]);
-        validation.validate_aud = false;
-        validation.set_required_spec_claims(&["exp", "iss", "sub", "client_id"]);
+        validation.set_audience(&[&self.client_id]);
+        validation.set_required_spec_claims(&["exp", "iss", "sub", "aud"]);
         let claims = decode::<Claims>(token, &key, &validation)
             .map_err(|_| AuthError::InvalidToken)?
             .claims;
-        if claims.sub.is_empty() || claims.client_id != self.client_id {
+        if claims.sub.is_empty() {
             return Err(AuthError::InvalidToken);
         }
         let principal = AuthenticatedPrincipal {
@@ -132,7 +132,6 @@ impl WorkOsVerifier {
 #[derive(Clone, Deserialize)]
 struct Claims {
     sub: String,
-    client_id: String,
     org_id: Option<String>,
     exp: u64,
 }

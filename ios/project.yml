@@ -13,6 +13,11 @@ settings:
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "1"
     SUPPORTS_MACCATALYST: NO
+    "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
+packages:
+  ConvexMobile:
+    url: https://github.com/get-convex/convex-swift
+    from: 0.8.1
 targets:
   ClippyMobile:
     type: application
@@ -39,12 +44,13 @@ targets:
         WORKOS_ISSUER: $(WORKOS_ISSUER)
         WORKOS_CLIENT_ID: $(WORKOS_CLIENT_ID)
         WORKOS_REDIRECT_URI: clippy-sync://auth/callback
-        RELAY_BASE_URL: $(RELAY_BASE_URL)
-        SYNC_ENDPOINT_HOST_SUFFIX: $(SYNC_ENDPOINT_HOST_SUFFIX)
+        CONVEX_URL: $(CONVEX_URL)
         SYNC_ENVIRONMENT: $(SYNC_ENVIRONMENT)
     sources:
       - path: Shared
       - path: ClippyMobile
+    dependencies:
+      - package: ConvexMobile
     configFiles:
       Debug: Config/Staging.xcconfig
       Staging: Config/Staging.xcconfig

@@ -11,7 +11,7 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
     @Published private(set) var errorMessage: String?
 
     private let configuration: RuntimeConfiguration
-    private let keychain: KeychainStore
+    private let tokenStore: OAuthTokenStore
     private let session: URLSession
     private let verifier: JWTVerifier
     private var webSession: ASWebAuthenticationSession?
@@ -19,12 +19,14 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
 
     init(
         configuration: RuntimeConfiguration,
-        keychain: KeychainStore = KeychainStore(),
+        tokenStore: OAuthTokenStore? = nil,
         session: URLSession = .shared,
         verifier: JWTVerifier? = nil
     ) {
         self.configuration = configuration
-        self.keychain = keychain
+        self.tokenStore = tokenStore ?? OAuthTokenStore(
+            environment: configuration.environment.rawValue
+        )
         self.session = session
         guard let verifier = verifier ?? (try? JWTVerifier(
             issuer: configuration.workOSIssuer,
@@ -35,9 +37,15 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
         }
         self.verifier = verifier
         super.init()
+        signedIn = (try? self.tokenStore.load()) != nil
         Task { [weak self] in
-            do { _ = try await self?.validatedStoredSession(minimumValidity: 60) }
-            catch { self?.signOut() }
+            do {
+                _ = try await self?.accessToken()
+                self?.errorMessage = nil
+            } catch {
+                // accessToken classifies the failure. A temporary network or
+                // signing-key outage must not erase a refreshable session.
+            }
         }
     }
 
@@ -93,8 +101,7 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
         } catch AuthError.refreshRequired {
             return try await refreshSession().accessToken
         } catch {
-            try? deleteOAuthCredentials()
-            signedIn = false
+            handleStoredSessionFailure(error)
             throw error
         }
     }
@@ -108,8 +115,7 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
         } catch AuthError.refreshRequired {
             session = try await refreshSession()
         } catch {
-            try? deleteOAuthCredentials()
-            signedIn = false
+            handleStoredSessionFailure(error)
             throw error
         }
         return AuthenticatedPrincipal(
@@ -167,10 +173,11 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
 
     private func validatedStoredSession(minimumValidity: TimeInterval) async throws -> ValidatedSession {
-        guard let accessToken = try loadString(account: account("workos-access-token")),
-              let idToken = try loadString(account: account("workos-id-token")) else {
+        guard let stored = try tokenStore.load() else {
             throw AuthError.signedOut
         }
+        let accessToken = stored.accessToken
+        let idToken = stored.idToken
         let access = try await verifier.verify(accessToken)
         let id = try await verifier.verify(idToken, kind: .id)
         try Self.requireSamePrincipal(access, id)
@@ -200,15 +207,19 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
             return session
         } catch {
             refreshTask = nil
-            try? deleteOAuthCredentials()
-            signedIn = false
-            errorMessage = "Your session expired. Sign in again."
+            if Self.isTerminalSessionFailure(error) {
+                try? deleteOAuthCredentials()
+                signedIn = false
+                errorMessage = "Your session expired. Sign in again."
+            } else {
+                errorMessage = "Could not refresh sign-in. Clippy will retry."
+            }
             throw error
         }
     }
 
     private func performRefresh() async throws -> ValidatedSession {
-        guard let refreshToken = try loadString(account: account("workos-refresh-token")) else {
+        guard let refreshToken = try tokenStore.load()?.refreshToken else {
             throw AuthError.signedOut
         }
         let tokenSet = try await exchange(fields: [
@@ -235,16 +246,23 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
             .sorted()
             .joined(separator: "&")
             .data(using: .utf8)
-        let (data, response) = try await session.data(for: request)
-        guard let response = response as? HTTPURLResponse,
-              response.statusCode == 200,
-              data.count <= 1_048_576 else {
-            throw AuthError.tokenExchangeFailed
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await session.data(for: request) }
+        catch { throw AuthError.tokenServiceUnavailable }
+        guard let response = response as? HTTPURLResponse else {
+            throw AuthError.tokenServiceUnavailable
+        }
+        if [400, 401, 403].contains(response.statusCode) {
+            throw AuthError.tokenRejected
+        }
+        guard response.statusCode == 200, data.count <= 1_048_576 else {
+            throw AuthError.tokenServiceUnavailable
         }
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         do { return try decoder.decode(TokenSet.self, from: data) }
-        catch { throw AuthError.tokenExchangeFailed }
+        catch { throw AuthError.invalidTokenResponse }
     }
 
     private func validate(tokenSet: TokenSet, expectedNonce: String?) async throws -> ValidatedSession {
@@ -264,39 +282,51 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
 
     private func store(tokenSet: TokenSet, replacingRefreshToken: Bool) throws {
-        do {
-            try keychain.save(Data(tokenSet.accessToken.utf8), account: account("workos-access-token"))
-            try keychain.save(Data(tokenSet.idToken.utf8), account: account("workos-id-token"))
-            if let refresh = tokenSet.refreshToken {
-                try keychain.save(Data(refresh.utf8), account: account("workos-refresh-token"))
-            } else if replacingRefreshToken {
-                try keychain.delete(account: account("workos-refresh-token"))
-            }
-        } catch {
-            try? deleteOAuthCredentials()
-            throw error
-        }
-    }
-
-    private func loadString(account: String) throws -> String? {
-        guard let data = try keychain.load(account: account) else { return nil }
-        guard let value = String(data: data, encoding: .utf8), !value.isEmpty else {
-            throw AuthError.invalidToken
-        }
-        return value
+        let existingRefresh = replacingRefreshToken ? nil : try tokenStore.load()?.refreshToken
+        try tokenStore.save(OAuthSessionTokens(
+            accessToken: tokenSet.accessToken,
+            idToken: tokenSet.idToken,
+            refreshToken: tokenSet.refreshToken ?? (replacingRefreshToken ? nil : existingRefresh)
+        ))
     }
 
     private func deleteOAuthCredentials() throws {
-        for name in ["workos-access-token", "workos-id-token", "workos-refresh-token"] {
-            try keychain.delete(account: account(name))
+        try tokenStore.delete()
+    }
+
+    private func handleStoredSessionFailure(_ error: Error) {
+        if Self.isTerminalSessionFailure(error) {
+            try? deleteOAuthCredentials()
+            signedIn = false
+        } else {
+            errorMessage = "Could not verify sign-in. Clippy will retry."
         }
     }
 
-    private func account(_ name: String) -> String { configuration.keychainAccount(name) }
+    private static func isTerminalSessionFailure(_ error: Error) -> Bool {
+        if let error = error as? AuthError {
+            switch error {
+            case .tokenServiceUnavailable:
+                return false
+            case .invalidAuthorizationURL, .missingCode, .tokenRejected,
+                 .invalidTokenResponse, .randomFailed, .signedOut, .invalidToken,
+                 .refreshRequired:
+                return true
+            }
+        }
+        if let error = error as? JWTVerificationError {
+            return error != .invalidJWKSResponse
+        }
+        if let error = error as? OAuthTokenStoreError {
+            return error == .invalidSession
+        }
+        return false
+    }
 
     private static func requireSamePrincipal(_ access: VerifiedJWT, _ id: VerifiedJWT) throws {
-        guard secureEquals(access.subject, id.subject),
-              access.organizationId == id.organizationId else {
+        // WorkOS Connect ID tokens identify the user but do not necessarily
+        // repeat the access token's organization claim.
+        guard secureEquals(access.subject, id.subject) else {
             throw AuthError.invalidToken
         }
     }
@@ -333,7 +363,9 @@ private struct ValidatedSession: Sendable {
 private enum AuthError: Error {
     case invalidAuthorizationURL
     case missingCode
-    case tokenExchangeFailed
+    case tokenRejected
+    case tokenServiceUnavailable
+    case invalidTokenResponse
     case randomFailed
     case signedOut
     case invalidToken
