@@ -157,7 +157,7 @@ impl CloudClient {
             ("actorId".to_string(), Value::String(actor_id.to_string())),
         ]);
         let mut subscription = client
-            .subscribe("sync:changes", args)
+            .subscribe("sync:coordinationSignals", args)
             .await
             .map_err(|_| CloudError::Connection)?;
 

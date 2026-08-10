@@ -135,6 +135,50 @@ export const changes = query({
   },
 });
 
+export const deviceRegistration = query({
+  args: { workspaceId: v.string(), actorId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx);
+    requireUuid(args.workspaceId, "workspaceId");
+    requireUuid(args.actorId, "actorId");
+    await requireOwnedWorkspace(ctx, args.workspaceId, identity.tokenIdentifier);
+    const device = await ctx.db
+      .query("devices")
+      .withIndex("by_workspace_actor", (q: any) =>
+        q.eq("workspaceId", args.workspaceId).eq("actorId", args.actorId),
+      )
+      .unique();
+    return { enrolled: device?.ownerId === identity.tokenIdentifier };
+  },
+});
+
+// Desktop subscribes to this narrow coordination query. Enrollment requests
+// must wake the Mac immediately even though they do not change device counters.
+export const coordinationSignals = query({
+  args: { workspaceId: v.string(), actorId: v.string() },
+  handler: async (ctx, args) => {
+    const identity = await requireIdentity(ctx);
+    await requireOwnedWorkspace(ctx, args.workspaceId, identity.tokenIdentifier);
+    await requireRegisteredDevice(ctx, args.workspaceId, args.actorId, identity.tokenIdentifier);
+    const devices = await ctx.db
+      .query("devices")
+      .withIndex("by_workspace", (q) => q.eq("workspaceId", args.workspaceId))
+      .take(MAX_DEVICES);
+    const pending = await ctx.db
+      .query("enrollments")
+      .withIndex("by_workspace_status_expiry", (q: any) =>
+        q.eq("workspaceId", args.workspaceId).eq("status", "pending"),
+      )
+      .first();
+    return {
+      counters: devices
+        .map((device) => ({ actorId: device.actorId, latestCounter: device.latestCounter }))
+        .sort((left, right) => left.actorId.localeCompare(right.actorId)),
+      pendingEnrollmentId: pending?.enrollmentId ?? null,
+    };
+  },
+});
+
 export const push = mutation({
   args: {
     workspaceId: v.string(),

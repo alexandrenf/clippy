@@ -1,8 +1,7 @@
 use super::auth::WorkOsVerifier;
 use super::config::{
-    Environment, PRODUCTION_WORKOS_AUDIENCE, PRODUCTION_WORKOS_CLIENT_ID,
-    PRODUCTION_WORKOS_ISSUER, STAGING_WORKOS_AUDIENCE, STAGING_WORKOS_CLIENT_ID,
-    STAGING_WORKOS_ISSUER,
+    Environment, PRODUCTION_WORKOS_AUDIENCE, PRODUCTION_WORKOS_CLIENT_ID, PRODUCTION_WORKOS_ISSUER,
+    STAGING_WORKOS_AUDIENCE, STAGING_WORKOS_CLIENT_ID, STAGING_WORKOS_ISSUER,
 };
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -41,10 +40,10 @@ pub async fn sign_in(environment: Environment, db_path: &Path) -> Result<(), Str
     let tokens = exchange_code(&config, &code, &verifier).await?;
     let workos = WorkOsVerifier::new(config.issuer.to_string(), config.audience.clone())
         .map_err(|_| "WorkOS configuration is invalid".to_string())?;
-    let principal = workos
-        .verify(&tokens.access_token)
-        .await
-        .map_err(|_| "AuthKit returned an invalid access token".to_string())?;
+    let principal = workos.verify(&tokens.access_token).await.map_err(|error| {
+        eprintln!("clippy AuthKit access-token verification failed: {error:?}");
+        "AuthKit returned an invalid access token".to_string()
+    })?;
     let id_subject = verify_id_token(&config, &tokens.id_token, &nonce).await?;
     if !secure_eq(principal.subject.as_bytes(), id_subject.as_bytes()) {
         return Err("AuthKit token identities did not match".into());
@@ -113,29 +112,27 @@ pub async fn refresh_access_token(
         .issuer
         .join("oauth2/token")
         .map_err(|_| "AuthKit token endpoint is invalid".to_string())?;
-    let response = reqwest::Client::builder()
-        .https_only(true)
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|_| "Could not create the AuthKit client".to_string())?
-        .post(endpoint)
-        .form(&[
+    let response = post_token_form(
+        &endpoint,
+        &[
             ("client_id", config.client_id.as_str()),
             ("grant_type", "refresh_token"),
             ("refresh_token", refresh_token),
-        ])
-        .send()
-        .await
-        .map_err(|_| "Could not refresh desktop sign-in; Clippy will retry".to_string())?;
-    if matches!(response.status().as_u16(), 400 | 401 | 403) {
+        ],
+    )
+    .await
+    .map_err(|_| "Could not refresh desktop sign-in; Clippy will retry".to_string())?;
+    if matches!(response.status, 400 | 401 | 403) {
         delete_session(db_path, environment);
         return Err("Desktop sign-in expired; sign in again from Clippy Settings".into());
     }
-    let tokens: RefreshTokenSet = response
-        .error_for_status()
-        .map_err(|_| "Could not refresh desktop sign-in; Clippy will retry".to_string())?
-        .json()
-        .await
+    if response.status != 200 {
+        return Err(format!(
+            "Could not refresh desktop sign-in; Clippy will retry (HTTP {})",
+            response.status
+        ));
+    }
+    let tokens: RefreshTokenSet = serde_json::from_slice(&response.body)
         .map_err(|_| "AuthKit returned an invalid refresh response".to_string())?;
     let verifier = WorkOsVerifier::new(config.issuer.to_string(), config.audience)
         .map_err(|_| "WorkOS configuration is invalid".to_string())?;
@@ -319,26 +316,147 @@ async fn exchange_code(
         .issuer
         .join("oauth2/token")
         .map_err(|_| "AuthKit token endpoint is invalid".to_string())?;
-    reqwest::Client::builder()
-        .https_only(true)
-        .timeout(Duration::from_secs(20))
-        .build()
-        .map_err(|_| "Could not create the AuthKit client".to_string())?
-        .post(endpoint)
-        .form(&[
+    let response = post_token_form(
+        &endpoint,
+        &[
             ("client_id", config.client_id.as_str()),
             ("grant_type", "authorization_code"),
             ("code", code),
             ("redirect_uri", CALLBACK),
             ("code_verifier", verifier),
-        ])
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|_| "AuthKit token exchange failed".to_string())?
-        .json()
-        .await
+        ],
+    )
+    .await
+    .map_err(|_| "AuthKit token exchange failed".to_string())?;
+    if response.status != 200 {
+        return Err("AuthKit token exchange failed".into());
+    }
+    serde_json::from_slice(&response.body)
         .map_err(|_| "AuthKit returned an invalid token response".to_string())
+}
+
+struct TokenHttpResponse {
+    status: u16,
+    body: Vec<u8>,
+}
+
+async fn post_token_form(
+    endpoint: &Url,
+    fields: &[(&str, &str)],
+) -> Result<TokenHttpResponse, String> {
+    let body = {
+        let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+        for (name, value) in fields {
+            serializer.append_pair(name, value);
+        }
+        serializer.finish()
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        let endpoint = endpoint.as_str().to_string();
+        return tokio::task::spawn_blocking(move || post_token_form_with_curl(&endpoint, &body))
+            .await
+            .map_err(|_| "AuthKit request task failed".to_string())?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let response = reqwest::Client::builder()
+            .https_only(true)
+            .timeout(Duration::from_secs(20))
+            .build()
+            .map_err(|_| "Could not create the AuthKit client".to_string())?
+            .post(endpoint.clone())
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .header(reqwest::header::ACCEPT, "application/json")
+            .body(body)
+            .send()
+            .await
+            .map_err(|_| "AuthKit request failed".to_string())?;
+        let status = response.status().as_u16();
+        let body = response
+            .bytes()
+            .await
+            .map_err(|_| "AuthKit response failed".to_string())?;
+        if body.len() > 1_048_576 {
+            return Err("AuthKit response was too large".into());
+        }
+        Ok(TokenHttpResponse {
+            status,
+            body: body.to_vec(),
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn post_token_form_with_curl(endpoint: &str, body: &str) -> Result<TokenHttpResponse, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("/usr/bin/curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--connect-timeout",
+            "10",
+            "--max-time",
+            "20",
+            "--max-filesize",
+            "1048576",
+            "--request",
+            "POST",
+            "--header",
+            "Content-Type: application/x-www-form-urlencoded",
+            "--header",
+            "Accept: application/json",
+            "--data-binary",
+            "@-",
+            "--output",
+            "-",
+            "--write-out",
+            "\n%{http_code}",
+            endpoint,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "Could not start the macOS HTTPS client".to_string())?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| "Could not open the macOS HTTPS client".to_string())?
+        .write_all(body.as_bytes())
+        .map_err(|_| "Could not send the AuthKit request".to_string())?;
+    let output = child
+        .wait_with_output()
+        .map_err(|_| "Could not finish the AuthKit request".to_string())?;
+    if !output.status.success() {
+        return Err("AuthKit request failed".into());
+    }
+    parse_curl_token_response(output.stdout)
+}
+
+#[cfg(target_os = "macos")]
+fn parse_curl_token_response(mut output: Vec<u8>) -> Result<TokenHttpResponse, String> {
+    let split = output
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .ok_or_else(|| "AuthKit response status was missing".to_string())?;
+    let status = std::str::from_utf8(&output[split + 1..])
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|status| (100..=599).contains(status))
+        .ok_or_else(|| "AuthKit response status was invalid".to_string())?;
+    output.truncate(split);
+    Ok(TokenHttpResponse {
+        status,
+        body: output,
+    })
 }
 
 async fn verify_id_token(
@@ -346,24 +464,13 @@ async fn verify_id_token(
     token: &str,
     expected_nonce: &str,
 ) -> Result<String, String> {
-    let jwks: JwkSet = reqwest::Client::builder()
-        .https_only(true)
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|_| "Could not create the AuthKit client".to_string())?
-        .get(
-            config
-                .issuer
-                .join("oauth2/jwks")
-                .map_err(|_| "AuthKit signing-key endpoint is invalid".to_string())?,
-        )
-        .send()
+    let endpoint = config
+        .issuer
+        .join("oauth2/jwks")
+        .map_err(|_| "AuthKit signing-key endpoint is invalid".to_string())?;
+    let jwks: JwkSet = super::auth::fetch_jwks(endpoint.as_str())
         .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|_| "Could not retrieve AuthKit signing keys".to_string())?
-        .json()
-        .await
-        .map_err(|_| "AuthKit signing keys were invalid".to_string())?;
+        .map_err(|_| "Could not retrieve AuthKit signing keys".to_string())?;
     let header = decode_header(token).map_err(|_| "ID token header was invalid".to_string())?;
     if header.alg != Algorithm::RS256 {
         return Err("ID token used an unexpected signing algorithm".into());
@@ -506,6 +613,16 @@ mod tests {
         assert!(access_token_expires_soon("not-a-jwt"));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parses_the_bounded_curl_token_response_without_exposing_its_body() {
+        let response =
+            parse_curl_token_response(b"{\"access_token\":\"secret\"}\n200".to_vec()).unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.body, br#"{"access_token":"secret"}"#);
+        assert!(parse_curl_token_response(b"missing-status".to_vec()).is_err());
+    }
+
     #[test]
     fn oauth_session_persists_in_the_private_database_without_keychain() {
         let directory = tempfile::tempdir().unwrap();
@@ -560,4 +677,5 @@ mod tests {
 
         assert_eq!(callback.await.unwrap(), Ok("valid".into()));
     }
+
 }

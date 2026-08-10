@@ -72,12 +72,17 @@ pub fn initialize(app: &AppHandle, db_path: PathBuf, data_dir: PathBuf) {
                 .ok()
                 .flatten()
                 .is_none()
-                || !auth_login::is_signed_in(environment, &runtime.db_path).await
             {
+                eprintln!("clippy sync activation skipped: no local workspace");
                 break;
             }
-            if activate(&app, &runtime, environment, false).await.is_ok() {
+            if !auth_login::is_signed_in(environment, &runtime.db_path).await {
+                eprintln!("clippy sync activation skipped: no valid local session");
                 break;
+            }
+            match activate(&app, &runtime, environment, false).await {
+                Ok(_) => break,
+                Err(error) => eprintln!("clippy sync activation failed: {error}"),
             }
             tokio::time::sleep(Duration::from_secs(retry_delays[retry])).await;
             retry = (retry + 1).min(retry_delays.len() - 1);
@@ -326,7 +331,8 @@ fn spawn_coordinator(
                             break;
                         }
                     }
-                    Err(_) => {
+                    Err(error) => {
+                        eprintln!("clippy sync exchange failed: {error}");
                         completed = false;
                         break;
                     }

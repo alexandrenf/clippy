@@ -38,6 +38,7 @@ final class AppModel: ObservableObject {
     private var authenticationRetryIndex = 0
     private var exchangeGeneration = UUID()
     private var confirmedRemoteChunks: Set<String> = []
+    private var needsAccountEnrollment = false
 
     init(configuration: RuntimeConfiguration) {
         self.configuration = configuration
@@ -350,8 +351,18 @@ final class AppModel: ObservableObject {
                 }
                 cloudAuthenticated = true
                 authenticationRetryIndex = 0
-                do { _ = try await resumePendingEnrollmentAcceptance() }
-                catch { message = "Waiting to finish secure account enrollment." }
+                do {
+                    let resumed = try await resumePendingEnrollmentAcceptance()
+                    if !resumed, let workspaceId {
+                        let enrolled = try await cloud.isDeviceEnrolled(
+                            workspaceId: workspaceId,
+                            actorId: deviceActorId
+                        )
+                        needsAccountEnrollment = !enrolled
+                    }
+                } catch {
+                    message = "Waiting to finish secure account enrollment."
+                }
                 cloudAuthenticationTask = nil
                 startForegroundNetworking()
             } catch is CancellationError {
@@ -410,6 +421,10 @@ final class AppModel: ObservableObject {
 
     private func startForegroundNetworking() {
         guard isForeground, isOnline, auth.signedIn, cloudAuthenticated else { return }
+        if needsAccountEnrollment {
+            beginAutomaticAccountEnrollment()
+            return
+        }
         guard let store, let workspaceId else {
             beginAutomaticAccountEnrollment()
             return
@@ -670,7 +685,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             var retryDelay: TimeInterval = 0
             while !Task.isCancelled, self.isForeground, self.isOnline, self.auth.signedIn,
-                  (self.workspaceId == nil || self.store == nil) {
+                  (self.needsAccountEnrollment || self.workspaceId == nil || self.store == nil) {
                 if retryDelay > 0 {
                     do { try await Task.sleep(for: .seconds(retryDelay)) }
                     catch { break }
@@ -783,6 +798,7 @@ final class AppModel: ObservableObject {
             throw AccountEnrollmentError.invalidResponse
         }
         try keychain.delete(account: configuration.keychainAccount("pending-enrollment-id"))
+        needsAccountEnrollment = false
         workspaceId = acceptedWorkspaceId
         if store == nil {
             try await installReplica(workspaceId: acceptedWorkspaceId)

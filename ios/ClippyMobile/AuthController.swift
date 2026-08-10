@@ -161,9 +161,8 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
                 "code_verifier": verifier
             ])
             let validated = try await validate(tokenSet: tokenSet, expectedNonce: expectedNonce)
-            try store(tokenSet: tokenSet, replacingRefreshToken: true)
-            guard validated.access.expiresAt.timeIntervalSinceNow > 60,
-                  validated.id.expiresAt.timeIntervalSinceNow > 60 else {
+            try store(tokenSet: tokenSet)
+            guard validated.access.expiresAt.timeIntervalSinceNow > 60 else {
                 throw AuthError.refreshRequired
             }
             signedIn = true
@@ -178,20 +177,14 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
             throw AuthError.signedOut
         }
         let accessToken = stored.accessToken
-        let idToken = stored.idToken
         let access = try await verifier.verify(accessToken)
-        let id = try await verifier.verify(idToken, kind: .id)
-        try Self.requireSamePrincipal(access, id)
         signedIn = true
-        if access.expiresAt.timeIntervalSinceNow <= minimumValidity ||
-            id.expiresAt.timeIntervalSinceNow <= minimumValidity {
+        if access.expiresAt.timeIntervalSinceNow <= minimumValidity {
             throw AuthError.refreshRequired
         }
         return ValidatedSession(
             accessToken: accessToken,
-            idToken: idToken,
-            access: access,
-            id: id
+            access: access
         )
     }
 
@@ -220,18 +213,59 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
     }
 
     private func performRefresh() async throws -> ValidatedSession {
-        guard let refreshToken = try tokenStore.load()?.refreshToken else {
+        guard let stored = try tokenStore.load(),
+              let refreshToken = stored.refreshToken else {
             throw AuthError.signedOut
         }
-        let tokenSet = try await exchange(fields: [
+        let tokenSet = try await refreshExchange(refreshToken: refreshToken)
+        let access = try await verifier.verify(tokenSet.accessToken)
+        let validated = ValidatedSession(
+            accessToken: tokenSet.accessToken,
+            access: access
+        )
+        try tokenStore.save(OAuthSessionTokens(
+            accessToken: tokenSet.accessToken,
+            idToken: stored.idToken,
+            refreshToken: tokenSet.refreshToken ?? refreshToken
+        ))
+        signedIn = true
+        return validated
+    }
+
+    private func refreshExchange(refreshToken: String) async throws -> RefreshTokenSet {
+        var request = URLRequest(url: configuration.workOSIssuer.appending(path: "oauth2/token"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        request.httpBody = [
             "client_id": configuration.workOSClientID,
             "grant_type": "refresh_token",
             "refresh_token": refreshToken
-        ])
-        let validated = try await validate(tokenSet: tokenSet, expectedNonce: nil)
-        try store(tokenSet: tokenSet, replacingRefreshToken: false)
-        signedIn = true
-        return validated
+        ]
+            .map { "\($0.key.formEncoded)=\($0.value.formEncoded)" }
+            .sorted()
+            .joined(separator: "&")
+            .data(using: .utf8)
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await session.data(for: request) }
+        catch { throw AuthError.tokenServiceUnavailable }
+        guard let response = response as? HTTPURLResponse else {
+            throw AuthError.tokenServiceUnavailable
+        }
+        if [400, 401, 403].contains(response.statusCode) {
+            throw AuthError.tokenRejected
+        }
+        guard response.statusCode == 200, data.count <= 1_048_576 else {
+            throw AuthError.tokenServiceUnavailable
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        do { return try decoder.decode(RefreshTokenSet.self, from: data) }
+        catch { throw AuthError.invalidTokenResponse }
     }
 
     private func exchange(fields: [String: String]) async throws -> TokenSet {
@@ -276,18 +310,15 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
         try Self.requireSamePrincipal(access, id)
         return ValidatedSession(
             accessToken: tokenSet.accessToken,
-            idToken: tokenSet.idToken,
-            access: access,
-            id: id
+            access: access
         )
     }
 
-    private func store(tokenSet: TokenSet, replacingRefreshToken: Bool) throws {
-        let existingRefresh = replacingRefreshToken ? nil : try tokenStore.load()?.refreshToken
+    private func store(tokenSet: TokenSet) throws {
         try tokenStore.save(OAuthSessionTokens(
             accessToken: tokenSet.accessToken,
             idToken: tokenSet.idToken,
-            refreshToken: tokenSet.refreshToken ?? (replacingRefreshToken ? nil : existingRefresh)
+            refreshToken: tokenSet.refreshToken
         ))
     }
 
@@ -307,11 +338,10 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
     private static func isTerminalSessionFailure(_ error: Error) -> Bool {
         if let error = error as? AuthError {
             switch error {
-            case .tokenServiceUnavailable:
+            case .tokenServiceUnavailable, .invalidTokenResponse:
                 return false
             case .invalidAuthorizationURL, .missingCode, .tokenRejected,
-                 .invalidTokenResponse, .randomFailed, .signedOut, .invalidToken,
-                 .refreshRequired:
+                 .randomFailed, .signedOut, .invalidToken, .refreshRequired:
                 return true
             }
         }
@@ -354,11 +384,14 @@ private struct TokenSet: Decodable {
     let refreshToken: String?
 }
 
+private struct RefreshTokenSet: Decodable {
+    let accessToken: String
+    let refreshToken: String?
+}
+
 private struct ValidatedSession: Sendable {
     let accessToken: String
-    let idToken: String
     let access: VerifiedJWT
-    let id: VerifiedJWT
 }
 
 private enum AuthError: Error {

@@ -12,7 +12,6 @@ use tokio::sync::RwLock;
 pub struct WorkOsVerifier {
     issuer: String,
     client_id: String,
-    client: reqwest::Client,
     jwks: Arc<RwLock<Option<CachedJwks>>>,
     validated: Arc<RwLock<HashMap<[u8; 32], CachedPrincipal>>>,
 }
@@ -33,15 +32,9 @@ impl WorkOsVerifier {
         if !issuer.starts_with("https://") || client_id.trim().is_empty() {
             return Err(AuthError::Configuration);
         }
-        let client = reqwest::Client::builder()
-            .https_only(true)
-            .timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|_| AuthError::Configuration)?;
         Ok(Self {
             issuer: issuer.trim_end_matches('/').into(),
             client_id,
-            client,
             jwks: Arc::new(RwLock::new(None)),
             validated: Arc::new(RwLock::new(HashMap::new())),
         })
@@ -111,8 +104,31 @@ impl WorkOsVerifier {
             }
         }
         let endpoint = format!("{}/oauth2/jwks", self.issuer);
-        let keys: JwkSet = self
-            .client
+        let keys = fetch_jwks(&endpoint).await?;
+        *self.jwks.write().await = Some(CachedJwks {
+            fetched_at: Instant::now(),
+            keys: keys.clone(),
+        });
+        Ok(keys)
+    }
+}
+
+pub(super) async fn fetch_jwks(endpoint: &str) -> Result<JwkSet, AuthError> {
+    #[cfg(target_os = "macos")]
+    {
+        let endpoint = endpoint.to_string();
+        return tokio::task::spawn_blocking(move || fetch_jwks_with_curl(&endpoint))
+            .await
+            .map_err(|_| AuthError::JwksUnavailable)?;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        reqwest::Client::builder()
+            .https_only(true)
+            .timeout(Duration::from_secs(10))
+            .build()
+            .map_err(|_| AuthError::JwksUnavailable)?
             .get(endpoint)
             .send()
             .await
@@ -120,13 +136,45 @@ impl WorkOsVerifier {
             .map_err(|_| AuthError::JwksUnavailable)?
             .json()
             .await
-            .map_err(|_| AuthError::JwksUnavailable)?;
-        *self.jwks.write().await = Some(CachedJwks {
-            fetched_at: Instant::now(),
-            keys: keys.clone(),
-        });
-        Ok(keys)
+            .map_err(|_| AuthError::JwksUnavailable)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn fetch_jwks_with_curl(endpoint: &str) -> Result<JwkSet, AuthError> {
+    let output = std::process::Command::new("/usr/bin/curl")
+        .args([
+            "--silent",
+            "--show-error",
+            "--connect-timeout",
+            "10",
+            "--max-time",
+            "15",
+            "--max-filesize",
+            "1048576",
+            "--header",
+            "Accept: application/json",
+            "--output",
+            "-",
+            "--write-out",
+            "\n%{http_code}",
+            endpoint,
+        ])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map_err(|_| AuthError::JwksUnavailable)?;
+    if !output.status.success() {
+        return Err(AuthError::JwksUnavailable);
+    }
+    let split = output
+        .stdout
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .ok_or(AuthError::JwksUnavailable)?;
+    if output.stdout.get(split + 1..) != Some(b"200") {
+        return Err(AuthError::JwksUnavailable);
+    }
+    serde_json::from_slice(&output.stdout[..split]).map_err(|_| AuthError::JwksUnavailable)
 }
 
 #[derive(Clone, Deserialize)]

@@ -106,6 +106,14 @@ public final class ConvexSyncClient {
         )
     }
 
+    public func isDeviceEnrolled(workspaceId: String, actorId: String) async throws -> Bool {
+        let response: DeviceRegistrationWire = try await queryOnce(
+            "sync:deviceRegistration",
+            with: ["workspaceId": workspaceId, "actorId": actorId]
+        )
+        return response.enrolled
+    }
+
     public func push(workspaceId: String, batch: CloudBatch) async throws -> UInt64 {
         let response: PushWire = try await client.mutation(
             "sync:push",
@@ -240,6 +248,8 @@ public final class ConvexSyncClient {
 private struct PushWire: Decodable {
     @ConvexFloat var acceptedThrough: Double
 }
+
+private struct DeviceRegistrationWire: Decodable { let enrolled: Bool }
 
 private struct CloudBatchWire: Decodable {
     let actorId: String
