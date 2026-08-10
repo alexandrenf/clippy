@@ -339,21 +339,15 @@ export function normalizedHtu(rawUrl: string): string {
 }
 
 export async function deriveAllocatedHostname(
-  relayIssuer: string,
+  _relayIssuer: string,
   publicHostname: string,
-  ownerSub: string,
-  environmentId: string,
+  _ownerSub: string,
+  _environmentId: string,
 ): Promise<string> {
-  const root = normalizePublicHostname(publicHostname);
-  const stage = relayStage(relayIssuer);
-  const digest = new Uint8Array(
-    await crypto.subtle.digest(
-      "SHA-256",
-      encoder.encode(`${stage}\0${ownerSub}\0${environmentId}`),
-    ),
-  );
-  const hex = Array.from(digest.slice(0, 16), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return `${stage}-${hex}.${root}`;
+  // Each stage is one account-wide Clippy workspace. Keeping the environment
+  // on the configured first-level hostname lets Cloudflare's managed edge
+  // certificate cover it without a paid nested-wildcard certificate.
+  return normalizePublicHostname(publicHostname);
 }
 
 export function normalizePublicHostname(hostname: string): string {
@@ -370,16 +364,12 @@ export function normalizePublicHostname(hostname: string): string {
 export function assertManagedHostname(
   hostname: string,
   publicHostname: string,
-  options: { allowLegacy?: boolean } = {},
+  _options: { allowLegacy?: boolean } = {},
 ): string {
   const candidate = hostname.toLowerCase().replace(/\.$/, "");
   const root = normalizePublicHostname(publicHostname);
-  const suffix = `.${root}`;
-  const allocationLabel = candidate.endsWith(suffix)
-    ? candidate.slice(0, -suffix.length)
-    : "";
-  const managed = /^(?:staging|prod)-[a-f0-9]{32}$/.test(allocationLabel);
-  if (!managed && !(options.allowLegacy && candidate === root)) {
+  const managed = candidate === root;
+  if (!managed) {
     throw new ApiError(500, "unmanaged_hostname", "The environment hostname is outside the managed relay domain");
   }
   return candidate;

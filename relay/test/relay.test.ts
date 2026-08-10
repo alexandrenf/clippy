@@ -45,8 +45,8 @@ describe("canonical signing", () => {
   });
 });
 
-describe("private hostname allocation", () => {
-  it("is stable, stage-isolated, lowercase, and does not expose the environment id", async () => {
+describe("account workspace hostname allocation", () => {
+  it("uses the stage's exact managed first-level hostname", async () => {
     const environmentId = "e91f20f1-5d2c-4ec4-80e9-48bd40cb7741";
     const staging = await deriveAllocatedHostname(
       "https://relay-staging.example.test",
@@ -66,24 +66,22 @@ describe("private hostname allocation", () => {
       "user_123",
       environmentId,
     );
-    expect(staging).toMatch(/^staging-[a-f0-9]{32}\.clippy-staging\.saudecomalex\.com$/);
+    expect(staging).toBe("clippy-staging.saudecomalex.com");
     expect(staging).toBe(again);
     expect(staging).not.toContain(environmentId);
     expect(production).not.toBe(staging);
   });
 
-  it("rejects arbitrary and legacy-exact hosts as normal allocations", () => {
+  it("rejects arbitrary and nested hosts", () => {
     expect(() =>
       assertManagedHostname("attacker.example", "clippy.saudecomalex.com"),
     ).toThrowError();
-    expect(() =>
-      assertManagedHostname("clippy.saudecomalex.com", "clippy.saudecomalex.com"),
-    ).toThrowError();
-    expect(
-      assertManagedHostname("clippy.saudecomalex.com", "clippy.saudecomalex.com", {
-        allowLegacy: true,
-      }),
-    ).toBe("clippy.saudecomalex.com");
+    expect(assertManagedHostname("clippy.saudecomalex.com", "clippy.saudecomalex.com"))
+      .toBe("clippy.saudecomalex.com");
+    expect(() => assertManagedHostname(
+      "prod-deadbeef.clippy.saudecomalex.com",
+      "clippy.saudecomalex.com",
+    )).toThrowError();
   });
 });
 

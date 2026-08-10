@@ -132,17 +132,32 @@ pub async fn sign_in_sync(
         .transpose()
         .map_err(|_| "Choose staging or production".to_string())?
         .unwrap_or(Environment::Production);
-    if runtime
-        .active
-        .lock()
-        .map_err(|_| "Sync runtime is busy")?
-        .is_some()
-    {
-        return Err("Restart Clippy before changing the signed-in sync environment".into());
+    let active_endpoint = {
+        let active = runtime.active.lock().map_err(|_| "Sync runtime is busy")?;
+        if let Some(active) = active.as_ref() {
+            if active.config.environment != environment {
+                return Err("Restart Clippy before changing the signed-in sync environment".into());
+            }
+            Some(active.config.endpoint.http_base_url.clone())
+        } else {
+            None
+        }
+    };
+    if !auth_login::is_signed_in(environment).await {
+        auth_login::sign_in(environment).await?;
     }
-    auth_login::sign_in(environment).await?;
     let endpoint = link::link(environment, &runtime.db_path, "Clippy on this Mac").await?;
-    activate(&app, &runtime, environment, true).await?;
+    if let Some(active_endpoint) = active_endpoint {
+        if active_endpoint != endpoint {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(350)).await;
+                app.restart();
+            });
+        }
+    } else {
+        activate(&app, &runtime, environment, true).await?;
+    }
     Ok(SyncSignIn {
         environment: environment.as_str(),
         endpoint,

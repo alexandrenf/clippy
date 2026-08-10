@@ -79,9 +79,8 @@ The Ed25519 signature covers canonical JSON containing exactly
 The relay consumes the challenge once, pins the WorkOS subject/organization
 and environment key, idempotently provisions a remotely managed Cloudflare
 Tunnel whose only ingress is the configured loopback origin plus a 404
-catch-all, and creates a proxied CNAME. The hostname is a stable digest of
-relay stage, owner subject, and environment ID; raw identifiers never appear
-in DNS.
+catch-all, and creates a proxied CNAME at the stage's exact managed hostname.
+The internal release has one account-wide environment per stage.
 
 Response:
 
@@ -89,12 +88,12 @@ Response:
 {
   "environment": { "id": "uuid", "name": "Alexandre's Mac", "status": "linked" },
   "endpoint": {
-    "http_base_url": "https://prod-digest.clippy.saudecomalex.com",
-    "ws_base_url": "wss://prod-digest.clippy.saudecomalex.com"
+    "http_base_url": "https://clippy.saudecomalex.com",
+    "ws_base_url": "wss://clippy.saudecomalex.com"
   },
   "runtime": {
     "tunnel_id": "uuid",
-    "hostname": "prod-digest.clippy.saudecomalex.com",
+    "hostname": "clippy.saudecomalex.com",
     "connector_token": "secret",
     "ingress": "http://127.0.0.1:49833",
     "relay_signing_public_jwk": { "kty": "OKP", "crv": "Ed25519", "x": "..." }

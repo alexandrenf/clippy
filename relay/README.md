@@ -42,16 +42,11 @@ managed hostname suffix:
 | staging | `https://relay-staging.saudecomalex.com` | `clippy-staging.saudecomalex.com` | `http://127.0.0.1:49832` |
 | production | `https://relay.saudecomalex.com` | `clippy.saudecomalex.com` | `http://127.0.0.1:49833` |
 
-The allocation is deterministic:
-
-```text
-<stage>-<first-128-bits-of-sha256(stage NUL owner_sub NUL environment_id)>.<suffix>
-```
-
-It is lowercase and never places a raw account or environment identifier in DNS.
-The exact legacy hosts `clippy-staging.saudecomalex.com` and
-`clippy.saudecomalex.com` are migration aliases only; they are never newly
-allocated.
+Each stage uses its exact first-level hostname. This internal release has one
+account-wide workspace per stage, so every device authenticated to that account
+discovers the same environment. The first-level shape is deliberate: it is
+covered by Cloudflare's managed edge certificate without requiring a nested
+wildcard certificate.
 
 ## Required configuration
 
