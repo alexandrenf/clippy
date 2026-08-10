@@ -44,6 +44,20 @@ public struct EnrollmentStatus: Sendable {
     public let response: AccountEnrollmentResponse?
 }
 
+public enum AccountWorkspaceRoutingDecision: Equatable, Sendable {
+    case keepLocalWorkspace
+    case enroll
+    case resetAndEnroll
+
+    public static func resolve(
+        localWorkspaceId: String?,
+        accountWorkspaceId: String?
+    ) -> Self {
+        guard let localWorkspaceId else { return .enroll }
+        return localWorkspaceId == accountWorkspaceId ? .keepLocalWorkspace : .resetAndEnroll
+    }
+}
+
 private final class WorkOSTokenProvider: AuthProvider, @unchecked Sendable {
     typealias T = String
     private let token: @Sendable () async throws -> String
@@ -180,6 +194,14 @@ public final class ConvexSyncClient {
         return try JSONDecoder().decode(SealedEnvelope.self, from: data)
     }
 
+    public func accountWorkspace() async throws -> String? {
+        let response: AccountWorkspaceWire? = try await queryOnce(
+            "sync:accountWorkspace",
+            with: [:]
+        )
+        return response?.workspaceId
+    }
+
     public func requestEnrollment(
         enrollmentId: String,
         actorId: String,
@@ -304,6 +326,7 @@ private struct EnrollmentStatusWire: Decodable {
 }
 
 private struct AcceptWire: Decodable { let workspaceId: String }
+private struct AccountWorkspaceWire: Decodable { let workspaceId: String }
 
 private func envelopeArgs(_ envelope: SealedEnvelope) -> [String: ConvexEncodable?] {
     [
