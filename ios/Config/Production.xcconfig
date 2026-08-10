@@ -4,6 +4,4 @@
 SYNC_ENVIRONMENT = production
 WORKOS_CLIENT_ID = client_01KZMNK73NWS9NDAPC3T54S2PE
 WORKOS_ISSUER = https:/$()/brave-mermaid-84.authkit.app
-// The environment-specific relay is deployed separately from the app build.
-RELAY_BASE_URL = https:/$()/relay.saudecomalex.com
-SYNC_ENDPOINT_HOST_SUFFIX = clippy.saudecomalex.com
+CONVEX_URL = https:/$()/descriptive-gecko-343.convex.cloud

@@ -22,6 +22,7 @@ struct ContentView: View {
     @State private var cameraForItem: UUID?
     @State private var showsCamera = false
     @State private var attachmentError: String?
+    @State private var showsSignOutConfirmation = false
 
     var body: some View {
         NavigationStack {
@@ -72,7 +73,7 @@ struct ContentView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
                             Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right") {
-                                auth.signOut()
+                                showsSignOutConfirmation = true
                             }
                         } label: {
                             Image(systemName: "ellipsis")
@@ -83,6 +84,18 @@ struct ContentView: View {
             }
         }
         .tint(ClippyPalette.accent)
+        .confirmationDialog(
+            "Sign out of Clippy on this iPhone?",
+            isPresented: $showsSignOutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Sign out on this iPhone", role: .destructive) {
+                model.signOut()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your local lists and workspace key will stay on this device.")
+        }
         .sheet(item: $editingItem) { item in
             itemEditor(item)
         }

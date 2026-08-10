@@ -18,7 +18,7 @@ const KEYCHAIN_ACCOUNT_PREFIX: &str = "workspace-key:";
 pub struct PairingOffer {
     pub version: u8,
     pub workspace_id: String,
-    pub tunnel_url: String,
+    pub sync_url: String,
     pub workos_issuer: String,
     pub workos_audience: String,
     pub mac_public_key: String,
@@ -57,7 +57,7 @@ pub struct PendingPairing {
 impl PendingPairing {
     pub fn new(
         workspace_id: String,
-        tunnel_url: String,
+        sync_url: String,
         workos_issuer: String,
         workos_audience: String,
         workspace_key: WorkspaceKey,
@@ -72,7 +72,7 @@ impl PendingPairing {
             offer: PairingOffer {
                 version: 1,
                 workspace_id,
-                tunnel_url,
+                sync_url,
                 workos_issuer,
                 workos_audience,
                 mac_public_key: URL_SAFE_NO_PAD.encode(public.as_bytes()),
@@ -263,6 +263,35 @@ pub fn open(
         .map_err(|_| CryptoError::AuthenticationFailed)
 }
 
+pub fn batch_aad(
+    workspace_id: &str,
+    actor_id: &str,
+    first_counter: u64,
+    last_counter: u64,
+) -> Vec<u8> {
+    length_prefixed(&[
+        "clippy-sync-batch",
+        "1",
+        workspace_id,
+        actor_id,
+        &first_counter.to_string(),
+        &last_counter.to_string(),
+    ])
+}
+
+pub fn chunk_aad(workspace_id: &str, hash: &str) -> Vec<u8> {
+    length_prefixed(&["clippy-sync-chunk", "1", workspace_id, hash])
+}
+
+fn length_prefixed(fields: &[&str]) -> Vec<u8> {
+    let mut output = Vec::new();
+    for field in fields {
+        output.extend_from_slice(&(field.len() as u32).to_be_bytes());
+        output.extend_from_slice(field.as_bytes());
+    }
+    output
+}
+
 fn derive_pairing_wrap_key(
     shared_secret: &[u8],
     one_time_token: &[u8],
@@ -286,7 +315,7 @@ fn pairing_aad(
     let fields = [
         offer.version.to_string(),
         offer.workspace_id.clone(),
-        offer.tunnel_url.clone(),
+        offer.sync_url.clone(),
         offer.workos_issuer.clone(),
         offer.workos_audience.clone(),
         offer.expires_at_ms.to_string(),
@@ -449,7 +478,7 @@ mod tests {
         let grant = pairing.complete(&response, &principal).unwrap();
 
         let mut tampered = offer.clone();
-        tampered.tunnel_url = "https://attacker.example".into();
+        tampered.sync_url = "https://attacker.example".into();
         assert!(unwrap_pairing_grant(&phone_secret, &tampered, &grant, &principal).is_err());
         let mut tampered = offer.clone();
         tampered.workos_issuer = "https://attacker.example".into();

@@ -142,6 +142,7 @@ public actor LocalSyncStore {
 
     public init(
         workspaceId: String,
+        actorId: String? = nil,
         baseDirectory: URL? = nil,
         fileManager: FileManager = .default
     ) throws {
@@ -169,10 +170,14 @@ public actor LocalSyncStore {
             }
             snapshot = decoded
         } else {
+            let actorId = actorId ?? UUID().uuidString.lowercased()
+            guard UUID(uuidString: actorId) != nil else {
+                throw LocalSyncStoreError.invalidOperation
+            }
             snapshot = Snapshot(
                 schemaVersion: Self.snapshotSchemaVersion,
                 workspaceId: workspaceId,
-                actorId: UUID().uuidString.lowercased(),
+                actorId: actorId.lowercased(),
                 counter: 0,
                 frontier: VersionVector(),
                 appliedOperationIds: [],
@@ -201,6 +206,8 @@ public actor LocalSyncStore {
             pendingOperationCount: snapshot.pendingOperations.count
         )
     }
+
+    public func frontier() -> VersionVector { snapshot.frontier }
 
     @discardableResult
     public func createSection(name: String) throws -> LocalSection {
@@ -568,7 +575,10 @@ public actor LocalSyncStore {
                 .compactMap { Self.entityUUID($0.entityId) }
         )
         return attachmentIds
-            .compactMap { snapshot.attachments[$0]?.manifest }
+            .compactMap { id -> FileManifest? in
+                guard let attachment = snapshot.attachments[id], !attachment.isDeleted else { return nil }
+                return attachment.manifest
+            }
             .flatMap(\.chunks)
             .map(\.sha256)
             .uniqued()

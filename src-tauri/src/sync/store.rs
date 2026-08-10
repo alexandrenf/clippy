@@ -755,6 +755,172 @@ pub fn exchange(
     })
 }
 
+/// Builds a bounded, contiguous batch containing only operations authored by
+/// this device and not yet accepted by Convex.
+pub fn cloud_outbound_payload(
+    conn: &Connection,
+    workspace_id: &str,
+    actor_id: &str,
+    accepted_through: u64,
+    limit: usize,
+) -> Result<SyncPayload, StoreError> {
+    if limit == 0 || limit > MAX_REMOTE_OPS || Uuid::parse_str(actor_id).is_err() {
+        return Err(StoreError::InvalidPayload);
+    }
+    let mut statement = conn.prepare(
+        "SELECT operation_json FROM sync_operations
+         WHERE workspace_id=?1 AND actor_id=?2 AND counter>?3
+         ORDER BY counter LIMIT ?4",
+    )?;
+    let operations = statement
+        .query_map(
+            params![workspace_id, actor_id, accepted_through, limit as i64],
+            |row| row.get::<_, String>(0),
+        )?
+        .map(|value| serde_json::from_str::<Operation>(&value?).map_err(StoreError::Json))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut frontier = VersionVector::default();
+    if let Some(last) = operations.last() {
+        frontier.observe(&last.dot);
+    }
+    Ok(SyncPayload {
+        schema_version: SYNC_SCHEMA_VERSION,
+        workspace_id: workspace_id.to_string(),
+        frontier,
+        operations,
+    })
+}
+
+/// Applies one authenticated E2EE cloud batch without manufacturing a peer
+/// response. The server guarantees batch order; the client still verifies the
+/// decrypted operation identities and contiguous counter range before commit.
+pub fn apply_cloud_batch(
+    conn: &mut Connection,
+    workspace_id: &str,
+    actor_id: &str,
+    first_counter: u64,
+    last_counter: u64,
+    payload: SyncPayload,
+) -> Result<usize, StoreError> {
+    if payload.schema_version != SYNC_SCHEMA_VERSION
+        || payload.workspace_id != workspace_id
+        || payload.operations.is_empty()
+        || payload.operations.len() > MAX_REMOTE_OPS
+        || payload
+            .operations
+            .first()
+            .map(|operation| operation.dot.counter)
+            != Some(first_counter)
+        || payload
+            .operations
+            .last()
+            .map(|operation| operation.dot.counter)
+            != Some(last_counter)
+        || payload
+            .operations
+            .iter()
+            .any(|operation| operation.dot.actor_id != actor_id)
+        || payload
+            .operations
+            .windows(2)
+            .any(|pair| pair[1].dot.counter != pair[0].dot.counter.saturating_add(1))
+    {
+        return Err(StoreError::InvalidPayload);
+    }
+    let tx = conn.transaction()?;
+    let mut changed = HashSet::new();
+    let mut inserted = 0;
+    for operation in &payload.operations {
+        validate_operation(operation, workspace_id)?;
+        let state_operation = resolve_operation_identity(&tx, operation)?;
+        if insert_operation_for_state(&tx, operation, &state_operation)? {
+            changed.insert((
+                state_operation.entity_kind.clone(),
+                state_operation.entity_id.clone(),
+            ));
+            inserted += 1;
+        }
+    }
+    let mut changed: Vec<_> = changed.into_iter().collect();
+    changed.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    for (kind, entity_id) in changed {
+        project_entity(&tx, workspace_id, &kind, &entity_id)?;
+    }
+    tx.commit()?;
+    Ok(inserted)
+}
+
+pub fn cloud_frontier(conn: &Connection, workspace_id: &str) -> Result<VersionVector, StoreError> {
+    load_frontier(conn, workspace_id)
+}
+
+pub fn pending_upload_chunk_hashes(
+    conn: &Connection,
+    workspace_id: &str,
+    actor_id: &str,
+    accepted_through: u64,
+) -> Result<Vec<String>, StoreError> {
+    let mut statement = conn.prepare(
+        "SELECT operation_json FROM sync_operations
+         WHERE workspace_id=?1 AND actor_id=?2 AND counter>?3 AND entity_kind='attachment'
+         ORDER BY counter",
+    )?;
+    let operations = statement
+        .query_map(params![workspace_id, actor_id, accepted_through], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut hashes = std::collections::BTreeSet::new();
+    for encoded in operations {
+        let operation: Operation = serde_json::from_str(&encoded)?;
+        let Mutation::SetMetadata { field, value } = operation.mutation else {
+            continue;
+        };
+        if field != "manifest" {
+            continue;
+        }
+        let manifest: FileManifest = serde_json::from_value(value)?;
+        if !validate_manifest(&manifest) {
+            return Err(StoreError::InvalidPayload);
+        }
+        hashes.extend(manifest.chunks.into_iter().map(|chunk| chunk.sha256));
+    }
+    Ok(hashes.into_iter().collect())
+}
+
+pub fn missing_chunk_hashes(
+    conn: &Connection,
+    workspace_id: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut statement = conn.prepare(
+        "SELECT state_json FROM sync_entities
+         WHERE workspace_id=?1 AND entity_kind='attachment' ORDER BY entity_id",
+    )?;
+    let states = statement
+        .query_map([workspace_id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut missing = std::collections::BTreeSet::new();
+    for encoded in states {
+        let state: EntityState = serde_json::from_str(&encoded)?;
+        if state.is_deleted() {
+            continue;
+        }
+        let Some(value) = state.value("manifest") else {
+            continue;
+        };
+        let manifest: FileManifest = serde_json::from_value(value.clone())?;
+        if !validate_manifest(&manifest) {
+            return Err(StoreError::InvalidPayload);
+        }
+        for chunk in manifest.chunks {
+            if chunk_source(conn, &chunk.sha256)?.is_none() {
+                missing.insert(chunk.sha256);
+            }
+        }
+    }
+    Ok(missing.into_iter().collect())
+}
+
 fn validate_incoming_frontier_and_sequence(
     tx: &Transaction<'_>,
     workspace_id: &str,

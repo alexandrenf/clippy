@@ -7,8 +7,15 @@ let package = Package(
     products: [
         .library(name: "ClippySyncCore", targets: ["ClippySyncCore"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/get-convex/convex-swift", from: "0.8.1")
+    ],
     targets: [
-        .target(name: "ClippySyncCore", path: "Shared"),
+        .target(
+            name: "ClippySyncCore",
+            dependencies: [.product(name: "ConvexMobile", package: "convex-swift")],
+            path: "Shared"
+        ),
         .testTarget(
             name: "ClippySyncCoreTests",
             dependencies: ["ClippySyncCore"],

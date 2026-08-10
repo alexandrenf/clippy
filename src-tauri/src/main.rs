@@ -82,6 +82,7 @@ fn main() {
             commands::agent_companion_status,
             commands::install_agent_companion,
             sync::sign_in_sync,
+            sync::sign_out_sync,
             sync::sync_auth_status,
             sync::sync_status,
         ])

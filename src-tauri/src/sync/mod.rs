@@ -1,30 +1,33 @@
 pub mod auth;
 pub mod auth_login;
+pub mod cloud;
 pub mod config;
-pub mod connect;
 pub mod crypto;
 pub mod files;
-pub mod link;
 pub mod model;
-pub mod origin;
-pub mod schedule;
 pub mod status;
 pub mod store;
-pub mod tunnel;
 
+use cloud::{CloudBatch, CloudClient};
 use config::{Environment, SyncConfig};
-use crypto::WorkspaceKey;
+use crypto::{
+    AuthenticatedPrincipal, PairingResponse, PendingPairing, SealedEnvelope, WorkspaceKey,
+};
+use model::SyncPayload;
 use rusqlite::Connection;
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Notify;
 use uuid::Uuid;
 
-const KEYCHAIN_SERVICE: &str = "app.clippy.desktop.sync";
-const AUTH_KEYCHAIN_SERVICE: &str = "app.clippy.desktop.auth.v2";
+const MAX_BATCH_PLAINTEXT_BYTES: usize = 550_000;
+const MAX_CHUNKS_PER_PASS: usize = 64;
+const ENROLLMENT_TTL_MS: u64 = 10 * 60 * 1_000;
 
 pub struct SyncRuntime {
     db_path: PathBuf,
@@ -35,8 +38,7 @@ pub struct SyncRuntime {
 
 struct ActiveSync {
     config: SyncConfig,
-    origin: Arc<origin::OriginState>,
-    _tunnel: Arc<Mutex<tunnel::TunnelRunner>>,
+    cancelled: Arc<AtomicBool>,
 }
 
 #[derive(Serialize)]
@@ -46,11 +48,6 @@ pub struct SyncSignIn {
     endpoint: String,
 }
 
-/// Installs the coordinator without creating credentials or network resources.
-/// Production is the normal default; environment variables remain explicit
-/// development overrides. If a prior workspace is configured, startup restores
-/// its origin and outbound-only tunnel so an active phone can wake the Mac via
-/// WebSocket without hot polling.
 pub fn initialize(app: &AppHandle, db_path: PathBuf, data_dir: PathBuf) {
     app.manage(SyncRuntime {
         db_path,
@@ -68,57 +65,27 @@ pub fn initialize(app: &AppHandle, db_path: PathBuf, data_dir: PathBuf) {
     tauri::async_runtime::spawn(async move {
         let runtime = app.state::<SyncRuntime>();
         let environment = selected_environment(&runtime.db_path).unwrap_or(Environment::Production);
-        if workspace_id(&runtime.db_path, environment, false)
-            .ok()
-            .flatten()
-            .is_none()
-        {
-            return;
-        }
-        let mut retry_index = 0_usize;
+        let retry_delays = [5_u64, 15, 30, 60, 5 * 60];
+        let mut retry = 0;
         loop {
-            match activate(&app, &runtime, environment, false).await {
-                Ok(_) => return,
-                Err(error)
-                    if error.contains("sign-in expired") || error.contains("Sign in first") =>
-                {
-                    status::set(
-                        &app,
-                        &app.state::<status::SyncStatus>(),
-                        status::SyncState::Idle,
-                    );
-                    return;
-                }
-                Err(_) => {
-                    status::set(
-                        &app,
-                        &app.state::<status::SyncStatus>(),
-                        status::SyncState::WaitingForDevice,
-                    );
-                    tokio::time::sleep(tunnel::retry_delay(retry_index)).await;
-                    retry_index = retry_index.saturating_add(1);
-                }
+            if workspace_id(&runtime.db_path, environment, false)
+                .ok()
+                .flatten()
+                .is_none()
+                || !auth_login::is_signed_in(environment, &runtime.db_path).await
+            {
+                break;
             }
+            if activate(&app, &runtime, environment, false).await.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(retry_delays[retry])).await;
+            retry = (retry + 1).min(retry_delays.len() - 1);
         }
     });
 }
 
-/// Releases the owned connector before the desktop process exits. Tauri's
-/// application state is not guaranteed to run Rust destructors during its
-/// final event-loop teardown, so normal quits must stop the child explicitly.
-pub fn shutdown(app: &AppHandle) {
-    let Some(runtime) = app.try_state::<SyncRuntime>() else {
-        return;
-    };
-    if let Ok(mut active) = runtime.active.lock() {
-        if let Some(sync) = active.as_ref() {
-            if let Ok(mut tunnel) = sync._tunnel.lock() {
-                tunnel.stop();
-            }
-        }
-        active.take();
-    };
-}
+pub fn shutdown(_app: &AppHandle) {}
 
 #[tauri::command]
 pub async fn sign_in_sync(
@@ -132,49 +99,77 @@ pub async fn sign_in_sync(
         .transpose()
         .map_err(|_| "Choose staging or production".to_string())?
         .unwrap_or(Environment::Production);
-    let active_endpoint = {
+    {
         let active = runtime.active.lock().map_err(|_| "Sync runtime is busy")?;
-        if let Some(active) = active.as_ref() {
-            if active.config.environment != environment {
-                return Err("Restart Clippy before changing the signed-in sync environment".into());
-            }
-            Some(active.config.endpoint.http_base_url.clone())
-        } else {
-            None
+        if active
+            .as_ref()
+            .is_some_and(|active| active.config.environment != environment)
+        {
+            return Err("Restart Clippy before changing the sync environment".into());
         }
-    };
-    if !auth_login::is_signed_in(environment).await {
-        auth_login::sign_in(environment).await?;
     }
-    let endpoint = link::link(environment, &runtime.db_path, "Clippy on this Mac").await?;
-    if let Some(active_endpoint) = active_endpoint {
-        if active_endpoint != endpoint {
-            let app = app.clone();
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(350)).await;
-                app.restart();
-            });
+    if !auth_login::is_signed_in(environment, &runtime.db_path).await {
+        auth_login::sign_in(environment, &runtime.db_path).await?;
+        let mut active = runtime.active.lock().map_err(|_| "Sync runtime is busy")?;
+        if let Some(session) = active.take() {
+            session.cancelled.store(true, Ordering::Release);
+            runtime.scan_wake.notify_one();
         }
-    } else {
-        activate(&app, &runtime, environment, true).await?;
     }
+    let config = activate(&app, &runtime, environment, true).await?;
     Ok(SyncSignIn {
         environment: environment.as_str(),
-        endpoint,
+        endpoint: config
+            .convex_url
+            .to_string()
+            .trim_end_matches('/')
+            .to_string(),
     })
 }
 
 #[tauri::command]
-pub async fn sync_auth_status(environment: Option<String>) -> Result<bool, String> {
+pub async fn sync_auth_status(
+    runtime: State<'_, SyncRuntime>,
+    environment: Option<String>,
+) -> Result<bool, String> {
     let environment = environment
         .as_deref()
         .map(Environment::parse)
         .transpose()
         .map_err(|_| "Choose staging or production".to_string())?
         .unwrap_or(Environment::Production);
-    let linked =
-        load_keychain(&format!("connect:{}:environment-id", environment.as_str())).is_some();
-    Ok(linked && auth_login::is_signed_in(environment).await)
+    Ok(auth_login::is_signed_in(environment, &runtime.db_path).await)
+}
+
+#[tauri::command]
+pub fn sign_out_sync(
+    app: AppHandle,
+    runtime: State<'_, SyncRuntime>,
+    environment: Option<String>,
+) -> Result<(), String> {
+    let environment = environment
+        .as_deref()
+        .map(Environment::parse)
+        .transpose()
+        .map_err(|_| "Choose staging or production".to_string())?
+        .unwrap_or(Environment::Production);
+    let mut active = runtime.active.lock().map_err(|_| "Sync runtime is busy")?;
+    if active
+        .as_ref()
+        .is_some_and(|session| session.config.environment == environment)
+    {
+        if let Some(session) = active.take() {
+            session.cancelled.store(true, Ordering::Release);
+            runtime.scan_wake.notify_one();
+        }
+    }
+    auth_login::sign_out(environment, &runtime.db_path);
+    status::set(
+        &app,
+        &app.state::<status::SyncStatus>(),
+        status::SyncState::Idle,
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -182,9 +177,6 @@ pub fn sync_status(status: State<'_, status::SyncStatus>) -> status::SyncState {
     status::get(&status)
 }
 
-/// Called by the existing mutation refresh hook. Local writes schedule one
-/// immediate scanner pass; the long timers are only a safety net for out-of-
-/// process database changes.
 pub fn wake(app: &AppHandle) {
     if let Some(runtime) = app.try_state::<SyncRuntime>() {
         runtime.scan_wake.notify_one();
@@ -196,192 +188,156 @@ async fn activate(
     runtime: &SyncRuntime,
     environment: Environment,
     create_workspace: bool,
-) -> Result<(SyncConfig, Arc<origin::OriginState>), String> {
+) -> Result<SyncConfig, String> {
     if let Some(active) = runtime
         .active
         .lock()
         .map_err(|_| "Sync runtime is busy")?
         .as_ref()
     {
-        if active.config.environment != environment {
-            return Err("Restart Clippy before switching sync environments".into());
-        }
-        return Ok((active.config.clone(), active.origin.clone()));
+        return Ok(active.config.clone());
     }
-
     let workspace_id = workspace_id(&runtime.db_path, environment, create_workspace)?
-        .ok_or_else(|| "No sync workspace has been paired yet".to_string())?;
-    let config = SyncConfig::for_environment(environment, workspace_id)
+        .ok_or_else(|| "No sync workspace exists yet".to_string())?;
+    let config = SyncConfig::for_environment(environment, workspace_id.clone())
         .map_err(|_| "Sync public configuration is invalid".to_string())?;
-    let (owner, verifier, direct, legacy_bearer_migration) = if let Some(linked) = &config.linked {
-        let owner = crypto::AuthenticatedPrincipal {
-            subject: linked.owner_subject.clone(),
-            organization_id: linked.owner_organization.clone(),
-        };
-        let relay_verifier = connect::RelayProofVerifier::new(
-            linked.relay_issuer.clone(),
-            config.workspace_id.clone(),
-            &linked.relay_signing_public_jwk,
-        )
-        .map_err(|_| "Pinned relay trust is invalid")?;
-        let identity = connect::EnvironmentIdentity::load_or_create(environment.as_str())
-            .map_err(|_| "Could not load the environment signing identity")?;
-        let endpoint = connect::RelayEndpoint {
-            http_base_url: config.endpoint.http_base_url.clone(),
-            ws_base_url: config.endpoint.ws_base_url.clone(),
-        };
-        (
-            owner,
-            None,
-            Some(origin::DirectSessionOrigin {
-                sessions: connect::ConnectSessionStore::new(),
-                relay_verifier,
-                identity,
-                endpoint,
-            }),
-            false,
-        )
-    } else {
-        // Pre-link migration only. Once environment identity exists in
-        // Keychain, startup never consults or prefers a WorkOS bearer token.
-        let verifier = auth::WorkOsVerifier::new(
-            config.workos_issuer.to_string(),
-            config.workos_audience.clone(),
-        )
-        .map_err(|_| "WorkOS configuration is invalid".to_string())?;
-        let access_token = load_keychain_from(
-            AUTH_KEYCHAIN_SERVICE,
-            &format!("workos:{}:access-token", environment.as_str()),
-        )
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .ok_or_else(|| {
-            format!(
-                "Sign in from Clippy Settings before pairing {}",
-                environment.as_str()
-            )
-        })?;
-        let owner = verifier
-            .verify(&access_token)
-            .await
-            .map_err(|error| match error {
-                auth::AuthError::InvalidToken => {
-                    "Desktop sign-in expired; sign in again from Clippy Settings".to_string()
-                }
-                auth::AuthError::JwksUnavailable => {
-                    "WorkOS signing keys are temporarily unavailable".to_string()
-                }
-                auth::AuthError::Configuration => "WorkOS configuration is invalid".to_string(),
-            })?;
-        (owner, Some(verifier), None, true)
-    };
-
-    let key = match crypto::load_workspace_key(&config.workspace_id)
+    let mut token = auth_login::access_token(environment, &runtime.db_path)?;
+    if auth_login::access_token_expires_soon(&token) {
+        token = auth_login::refresh_access_token(environment, &runtime.db_path).await?;
+    }
+    let verifier = auth::WorkOsVerifier::new(
+        config.workos_issuer.to_string(),
+        config.workos_audience.clone(),
+    )
+    .map_err(|_| "WorkOS configuration is invalid")?;
+    let owner = verifier
+        .verify(&token)
+        .await
+        .map_err(|_| "Desktop sign-in expired; sign in again from Clippy Settings")?;
+    let key = match crypto::load_workspace_key(&workspace_id)
         .map_err(|_| "Could not read the workspace key from Keychain")?
     {
         Some(key) => key,
         None if create_workspace => {
             let key = WorkspaceKey::random();
-            crypto::store_workspace_key(&config.workspace_id, &key)
+            crypto::store_workspace_key(&workspace_id, &key)
                 .map_err(|_| "Could not store the workspace key in Keychain")?;
             key
         }
         None => return Err("The workspace key is missing; pair this Mac again".into()),
     };
-
     let mut connection =
         Connection::open(&runtime.db_path).map_err(|_| "Could not open the local sync database")?;
     let actor =
         store::ensure_identity(&connection).map_err(|_| "Could not create a device identity")?;
-    let emitted = store::scan_local(&mut connection, &config.workspace_id, &actor)
+    store::scan_local(&mut connection, &workspace_id, &actor)
         .map_err(|_| "Could not scan local notes for sync")?;
 
-    let chunks_dir = runtime
-        .data_dir
-        .join("sync")
-        .join(environment.as_str())
-        .join("chunks");
-    let origin = origin::OriginState::new(
-        config.workspace_id.clone(),
-        runtime.db_path.clone(),
-        chunks_dir,
-        runtime.data_dir.join("attachments"),
-        key,
-        config.endpoint.http_base_url.clone(),
-        config
-            .workos_issuer
-            .as_str()
-            .trim_end_matches('/')
-            .to_string(),
-        config.workos_audience.clone(),
-        owner,
-        verifier,
-        direct,
-        legacy_bearer_migration,
-        app.clone(),
-    );
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", config.origin_port))
+    let cloud = CloudClient::connect(
+        config.convex_url.as_str(),
+        environment,
+        token,
+        &runtime.db_path,
+    )
+    .await
+    .map_err(|_| "Could not connect to Convex")?;
+    cloud
+        .bootstrap(&workspace_id, &actor, "Clippy on this Mac")
         .await
-        .map_err(|_| format!("Sync origin port {} is unavailable", config.origin_port))?;
-
-    let mut runner = tunnel::TunnelRunner::new(environment.as_str())
-        .map_err(|_| "Cloudflare tunnel configuration is invalid")?;
-    runner.start_if_needed().map_err(|_| {
-        format!(
-            "Cloudflare tunnel is unavailable; check the {} Keychain token and cloudflared",
-            environment.as_str()
-        )
-    })?;
-    let runner = Arc::new(Mutex::new(runner));
-
+        .map_err(|_| "Convex rejected this sync workspace")?;
+    save_environment(&runtime.db_path, environment)?;
+    let cancelled = Arc::new(AtomicBool::new(false));
     {
         let mut active = runtime.active.lock().map_err(|_| "Sync runtime is busy")?;
-        if active.is_some() {
-            return Err("Sync was activated concurrently; try again".into());
+        if active.is_none() {
+            *active = Some(ActiveSync {
+                config: config.clone(),
+                cancelled: cancelled.clone(),
+            });
         }
-        *active = Some(ActiveSync {
-            config: config.clone(),
-            origin: origin.clone(),
-            _tunnel: runner.clone(),
-        });
     }
-    save_environment(&runtime.db_path, environment)?;
-
-    let origin_for_server = origin.clone();
-    tauri::async_runtime::spawn(async move {
-        let _ = origin::serve_listener(origin_for_server, listener).await;
-    });
-    spawn_tunnel_monitor(app.clone(), runner);
-    spawn_scanner(
+    spawn_coordinator(
         app.clone(),
         runtime.db_path.clone(),
-        config.workspace_id.clone(),
+        runtime.data_dir.clone(),
+        config.clone(),
         actor,
+        key,
+        owner,
+        cloud,
         runtime.scan_wake.clone(),
-        origin.clone(),
+        cancelled,
     );
-
-    status::set(
-        app,
-        &app.state::<status::SyncStatus>(),
-        if emitted == 0 {
-            status::SyncState::Synced
-        } else {
-            status::SyncState::WaitingForDevice
-        },
-    );
-    Ok((config, origin))
+    Ok(config)
 }
 
-fn spawn_scanner(
+#[allow(clippy::too_many_arguments)]
+fn spawn_coordinator(
     app: AppHandle,
     db_path: PathBuf,
-    workspace_id: String,
+    data_dir: PathBuf,
+    config: SyncConfig,
     actor: String,
+    key: WorkspaceKey,
+    owner: AuthenticatedPrincipal,
+    cloud: CloudClient,
     wake: Arc<Notify>,
-    origin: Arc<origin::OriginState>,
+    cancelled: Arc<AtomicBool>,
 ) {
     tauri::async_runtime::spawn(async move {
+        let mut confirmed_remote_chunks = HashSet::new();
         loop {
+            if cancelled.load(Ordering::Acquire) {
+                break;
+            }
+            status::set(
+                &app,
+                &app.state::<status::SyncStatus>(),
+                status::SyncState::Syncing,
+            );
+            let mut completed = false;
+            for _ in 0..8 {
+                if cancelled.load(Ordering::Acquire) {
+                    break;
+                }
+                match sync_once(
+                    &app,
+                    &db_path,
+                    &data_dir,
+                    &config,
+                    &actor,
+                    &key,
+                    &owner,
+                    &cloud,
+                    &mut confirmed_remote_chunks,
+                )
+                .await
+                {
+                    Ok(has_more) => {
+                        completed = true;
+                        if !has_more {
+                            break;
+                        }
+                    }
+                    Err(_) => {
+                        completed = false;
+                        break;
+                    }
+                }
+            }
+            if cancelled.load(Ordering::Acquire) {
+                break;
+            }
+            status::set(
+                &app,
+                &app.state::<status::SyncStatus>(),
+                if completed {
+                    status::SyncState::Synced
+                } else {
+                    status::SyncState::WaitingForDevice
+                },
+            );
+
             let visible = app
                 .get_webview_window("main")
                 .and_then(|window| window.is_visible().ok())
@@ -395,56 +351,298 @@ fn spawn_scanner(
                 _ = wake.notified() => {}
                 _ = tokio::time::sleep(safety_delay) => {}
             }
-            let emitted = (|| {
-                let mut connection = Connection::open(&db_path).ok()?;
-                store::scan_local(&mut connection, &workspace_id, &actor).ok()
-            })()
-            .unwrap_or(0);
-            if emitted > 0 {
-                let _ = origin.events.send(());
-                status::set(
-                    &app,
-                    &app.state::<status::SyncStatus>(),
-                    status::SyncState::WaitingForDevice,
-                );
-            }
         }
     });
 }
 
-fn spawn_tunnel_monitor(app: AppHandle, runner: Arc<Mutex<tunnel::TunnelRunner>>) {
-    tauri::async_runtime::spawn(async move {
-        let mut retry_index = 0_usize;
-        let mut stable_since = std::time::Instant::now();
-        loop {
-            let running = runner
-                .lock()
-                .map(|mut runner| runner.is_running())
-                .unwrap_or(false);
-            if running {
-                if stable_since.elapsed() >= Duration::from_secs(30) {
-                    retry_index = 0;
-                }
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            } else {
-                status::set(
-                    &app,
-                    &app.state::<status::SyncStatus>(),
-                    status::SyncState::WaitingForDevice,
-                );
-                tokio::time::sleep(tunnel::retry_delay(retry_index)).await;
-                let restarted = runner
-                    .lock()
-                    .map(|mut runner| runner.start_if_needed().is_ok())
-                    .unwrap_or(false);
-                if restarted {
-                    stable_since = std::time::Instant::now();
-                } else {
-                    retry_index = retry_index.saturating_add(1);
-                }
+#[allow(clippy::too_many_arguments)]
+async fn sync_once(
+    app: &AppHandle,
+    db_path: &PathBuf,
+    data_dir: &PathBuf,
+    config: &SyncConfig,
+    actor: &str,
+    key: &WorkspaceKey,
+    owner: &AuthenticatedPrincipal,
+    cloud: &CloudClient,
+    confirmed_remote_chunks: &mut HashSet<String>,
+) -> Result<bool, String> {
+    let mut connection = Connection::open(db_path).map_err(|_| "open local sync database")?;
+    let emitted = store::scan_local(&mut connection, &config.workspace_id, actor)
+        .map_err(|_| "scan local changes")?;
+
+    grant_pending_enrollments(config, actor, key, owner, cloud).await?;
+
+    let changes = cloud
+        .changes(&config.workspace_id, actor)
+        .await
+        .map_err(|_| "read Convex frontier")?;
+    let accepted_through = changes
+        .iter()
+        .find(|entry| entry.actor_id == actor)
+        .map(|entry| entry.latest_counter)
+        .unwrap_or(0);
+    let candidates = store::pending_upload_chunk_hashes(
+        &connection,
+        &config.workspace_id,
+        actor,
+        accepted_through,
+    )
+    .map_err(|_| "list local attachment chunks")?
+    .into_iter()
+    .filter(|hash| !confirmed_remote_chunks.contains(hash))
+    .collect::<Vec<_>>();
+    if !candidates.is_empty() {
+        let batch = candidates
+            .iter()
+            .take(MAX_CHUNKS_PER_PASS)
+            .cloned()
+            .collect::<Vec<_>>();
+        let uploads = cloud
+            .prepare_uploads(&config.workspace_id, &batch)
+            .await
+            .map_err(|_| "prepare R2 uploads")?;
+        for upload in uploads {
+            if !upload.exists {
+                let (path, offset, size) = store::chunk_source(&connection, &upload.hash)
+                    .map_err(|_| "locate attachment chunk")?
+                    .ok_or_else(|| "attachment chunk disappeared".to_string())?;
+                let bytes = read_chunk(&path, offset, size)?;
+                let sealed = crypto::seal(
+                    key,
+                    &bytes,
+                    &crypto::chunk_aad(&config.workspace_id, &upload.hash),
+                )
+                .map_err(|_| "encrypt attachment chunk")?;
+                let body = serde_json::to_vec(&sealed).map_err(|_| "encode attachment chunk")?;
+                cloud
+                    .upload(
+                        upload
+                            .url
+                            .as_deref()
+                            .ok_or_else(|| "missing R2 upload URL".to_string())?,
+                        body,
+                    )
+                    .await
+                    .map_err(|_| "upload attachment chunk")?;
             }
+            confirmed_remote_chunks.insert(upload.hash);
         }
-    });
+        if candidates.len() > batch.len() {
+            return Ok(true);
+        }
+    }
+
+    let mut limit = 256;
+    let mut outbound = store::cloud_outbound_payload(
+        &connection,
+        &config.workspace_id,
+        actor,
+        accepted_through,
+        limit,
+    )
+    .map_err(|_| "build outbound batch")?;
+    let mut outbound_may_have_more = false;
+    while !outbound.operations.is_empty() {
+        let encoded = serde_json::to_vec(&outbound).map_err(|_| "encode outbound batch")?;
+        if encoded.len() <= MAX_BATCH_PLAINTEXT_BYTES {
+            let first = outbound.operations.first().unwrap().dot.counter;
+            let last = outbound.operations.last().unwrap().dot.counter;
+            let envelope = crypto::seal(
+                key,
+                &encoded,
+                &crypto::batch_aad(&config.workspace_id, actor, first, last),
+            )
+            .map_err(|_| "encrypt outbound batch")?;
+            outbound_may_have_more = outbound.operations.len() == limit;
+            let response = cloud
+                .push(
+                    &config.workspace_id,
+                    &CloudBatch {
+                        actor_id: actor.to_string(),
+                        first_counter: first,
+                        last_counter: last,
+                        envelope,
+                    },
+                )
+                .await
+                .map_err(|_| "push Convex batch")?;
+            if response.accepted_through < last {
+                return Err("Convex did not acknowledge the complete batch".into());
+            }
+            break;
+        }
+        if limit == 1 {
+            return Err("One local operation is too large for Convex".into());
+        }
+        limit = (limit / 2).max(1);
+        outbound = store::cloud_outbound_payload(
+            &connection,
+            &config.workspace_id,
+            actor,
+            accepted_through,
+            limit,
+        )
+        .map_err(|_| "resize outbound batch")?;
+    }
+
+    let frontier = store::cloud_frontier(&connection, &config.workspace_id)
+        .map_err(|_| "read local frontier")?;
+    let remote_is_ahead = changes
+        .iter()
+        .any(|entry| entry.latest_counter > frontier.0.get(&entry.actor_id).copied().unwrap_or(0));
+    let batches = if remote_is_ahead {
+        cloud
+            .pull(&config.workspace_id, actor, &frontier)
+            .await
+            .map_err(|_| "pull Convex batches")?
+    } else {
+        Vec::new()
+    };
+    let pulled_full_page = batches.len() >= 12;
+    let mut applied = 0;
+    for batch in batches {
+        let plaintext = crypto::open(
+            key,
+            &batch.envelope,
+            &crypto::batch_aad(
+                &config.workspace_id,
+                &batch.actor_id,
+                batch.first_counter,
+                batch.last_counter,
+            ),
+        )
+        .map_err(|_| "decrypt Convex batch")?;
+        if plaintext.len() > MAX_BATCH_PLAINTEXT_BYTES {
+            return Err("Convex batch exceeded the client limit".into());
+        }
+        let payload: SyncPayload =
+            serde_json::from_slice(&plaintext).map_err(|_| "decode Convex batch")?;
+        applied += store::apply_cloud_batch(
+            &mut connection,
+            &config.workspace_id,
+            &batch.actor_id,
+            batch.first_counter,
+            batch.last_counter,
+            payload,
+        )
+        .map_err(|_| "apply Convex batch")?;
+    }
+
+    let missing = store::missing_chunk_hashes(&connection, &config.workspace_id)
+        .map_err(|_| "find missing attachment chunks")?;
+    if !missing.is_empty() {
+        let batch = missing
+            .iter()
+            .take(MAX_CHUNKS_PER_PASS)
+            .cloned()
+            .collect::<Vec<_>>();
+        let urls = cloud
+            .download_urls(&config.workspace_id, &batch)
+            .await
+            .map_err(|_| "prepare R2 downloads")?;
+        let chunks_dir = data_dir
+            .join("sync")
+            .join(config.environment.as_str())
+            .join("chunks");
+        for download in urls {
+            let encoded = cloud
+                .download(&download.url)
+                .await
+                .map_err(|_| "download attachment chunk")?;
+            let envelope: SealedEnvelope =
+                serde_json::from_slice(&encoded).map_err(|_| "decode attachment chunk")?;
+            let bytes = crypto::open(
+                key,
+                &envelope,
+                &crypto::chunk_aad(&config.workspace_id, &download.hash),
+            )
+            .map_err(|_| "decrypt attachment chunk")?;
+            store::store_received_chunk(&connection, &chunks_dir, &download.hash, &bytes)
+                .map_err(|_| "store attachment chunk")?;
+            confirmed_remote_chunks.insert(download.hash);
+        }
+        if missing.len() > batch.len() {
+            return Ok(true);
+        }
+    }
+    store::project_ready_attachments(
+        &mut connection,
+        &config.workspace_id,
+        &data_dir.join("attachments"),
+    )
+    .map_err(|_| "project attachment")?;
+    if emitted > 0 || applied > 0 {
+        let _ = app.emit("refresh", ());
+    }
+    Ok(pulled_full_page || outbound_may_have_more)
+}
+
+async fn grant_pending_enrollments(
+    config: &SyncConfig,
+    actor: &str,
+    key: &WorkspaceKey,
+    owner: &AuthenticatedPrincipal,
+    cloud: &CloudClient,
+) -> Result<(), String> {
+    let requests = cloud
+        .pending_enrollments(&config.workspace_id, actor)
+        .await
+        .map_err(|_| "read pending enrollments")?;
+    for request in requests {
+        let pending = PendingPairing::new(
+            config.workspace_id.clone(),
+            config
+                .convex_url
+                .to_string()
+                .trim_end_matches('/')
+                .to_string(),
+            config
+                .workos_issuer
+                .to_string()
+                .trim_end_matches('/')
+                .to_string(),
+            config.workos_audience.clone(),
+            key.clone(),
+            owner.clone(),
+            ENROLLMENT_TTL_MS,
+        );
+        let offer = pending.offer.clone();
+        let grant = pending
+            .complete(
+                &PairingResponse {
+                    phone_public_key: request.phone_public_key,
+                    one_time_token: offer.one_time_token.clone(),
+                },
+                owner,
+            )
+            .map_err(|_| "create enrollment grant")?;
+        cloud
+            .grant_enrollment(
+                &config.workspace_id,
+                actor,
+                &request.enrollment_id,
+                &offer,
+                &grant,
+            )
+            .await
+            .map_err(|_| "publish enrollment grant")?;
+    }
+    Ok(())
+}
+
+fn read_chunk(path: &str, offset: u64, size: usize) -> Result<Vec<u8>, String> {
+    use std::io::{Read, Seek, SeekFrom};
+    if size > files::DEFAULT_CHUNK_SIZE {
+        return Err("attachment chunk is too large".into());
+    }
+    let mut file = std::fs::File::open(path).map_err(|_| "open attachment chunk")?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|_| "seek attachment chunk")?;
+    let mut bytes = vec![0; size];
+    file.read_exact(&mut bytes)
+        .map_err(|_| "read attachment chunk")?;
+    Ok(bytes)
 }
 
 fn selected_environment(db_path: &PathBuf) -> Option<Environment> {
@@ -491,19 +689,9 @@ fn save_environment(db_path: &PathBuf, environment: Environment) -> Result<(), S
         .map_err(|_| "Could not save the sync environment".to_string())
 }
 
-#[cfg(target_os = "macos")]
-fn load_keychain(account: &str) -> Option<Vec<u8>> {
-    load_keychain_from(KEYCHAIN_SERVICE, account)
-}
-
-#[cfg(target_os = "macos")]
-fn load_keychain_from(service: &str, account: &str) -> Option<Vec<u8>> {
-    security_framework::passwords::get_generic_password(service, account).ok()
-}
-
-/// Sync persistence is additive: local tables and numeric IDs remain stable,
-/// while immutable operations, causal frontiers, peer acknowledgements, and
-/// encrypted chunk indexes live in separate tables.
+/// Sync persistence is additive: local rows keep their numeric IDs while
+/// immutable operations, causal frontiers, and verified chunk locations live
+/// in separate tables.
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS sync_operations(

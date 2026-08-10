@@ -1,8 +1,5 @@
-// Public staging metadata. No API key, client secret, token, or tunnel
-// credential belongs in this file.
+// Public staging metadata. No API key, client secret, or token belongs here.
 SYNC_ENVIRONMENT = staging
 WORKOS_CLIENT_ID = client_01KZMNQXBXWT2A807NZCE6V2HV
 WORKOS_ISSUER = https:/$()/fashionable-machine-85-staging.authkit.app
-// The environment-specific relay is deployed separately from the app build.
-RELAY_BASE_URL = https:/$()/relay-staging.saudecomalex.com
-SYNC_ENDPOINT_HOST_SUFFIX = clippy-staging.saudecomalex.com
+CONVEX_URL = https:/$()/courteous-okapi-555.convex.cloud
