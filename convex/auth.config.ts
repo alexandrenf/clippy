@@ -1,10 +1,10 @@
 import type { AuthConfig } from "convex/server";
 
 const issuer = process.env.WORKOS_ISSUER?.replace(/\/$/, "");
-const clientId = process.env.WORKOS_CLIENT_ID;
+const audience = process.env.WORKOS_AUDIENCE;
 
-if (!issuer || !clientId) {
-  throw new Error("Set WORKOS_ISSUER and WORKOS_CLIENT_ID in this Convex deployment");
+if (!issuer || !audience) {
+  throw new Error("Set WORKOS_ISSUER and WORKOS_AUDIENCE in this Convex deployment");
 }
 
 export default {
@@ -12,7 +12,7 @@ export default {
     {
       type: "customJwt",
       issuer,
-      applicationID: clientId,
+      applicationID: audience,
       jwks: `${issuer}/oauth2/jwks`,
       algorithm: "RS256",
     },

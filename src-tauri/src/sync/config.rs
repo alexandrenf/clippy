@@ -1,10 +1,12 @@
 use std::env;
 use url::Url;
 
-pub const STAGING_WORKOS_AUDIENCE: &str = "client_01KZMNQXBXWT2A807NZCE6V2HV";
+pub const STAGING_WORKOS_CLIENT_ID: &str = "client_01KZMNQXBXWT2A807NZCE6V2HV";
+pub const STAGING_WORKOS_AUDIENCE: &str = "client_01KZM6XXV1EP0G3YVNE0VHQ689";
 pub const STAGING_WORKOS_ISSUER: &str = "https://fashionable-machine-85-staging.authkit.app";
 pub const STAGING_CONVEX_URL: &str = "https://courteous-okapi-555.convex.cloud";
-pub const PRODUCTION_WORKOS_AUDIENCE: &str = "client_01KZMNK73NWS9NDAPC3T54S2PE";
+pub const PRODUCTION_WORKOS_CLIENT_ID: &str = "client_01KZMNK73NWS9NDAPC3T54S2PE";
+pub const PRODUCTION_WORKOS_AUDIENCE: &str = "client_01KZM77VDNK8B2ABTB2PNTJ9XX";
 pub const PRODUCTION_WORKOS_ISSUER: &str = "https://brave-mermaid-84.authkit.app";
 pub const PRODUCTION_CONVEX_URL: &str = "https://descriptive-gecko-343.convex.cloud";
 

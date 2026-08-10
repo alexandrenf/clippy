@@ -729,7 +729,7 @@ final class AppModel: ObservableObject {
         let offer = response.offer
         guard offer.workspaceId == requested.workspaceId,
               offer.workosIssuer == configuration.workOSIssuer.absoluteString,
-              offer.workosAudience == configuration.workOSClientID,
+              offer.workosAudience == configuration.workOSAudience,
               offer.syncUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
                 configuration.convexURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
               UInt64(Date().timeIntervalSince1970 * 1_000) <= offer.expiresAtMs else {

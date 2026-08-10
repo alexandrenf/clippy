@@ -1,5 +1,6 @@
 // Public staging metadata. No API key, client secret, or token belongs here.
 SYNC_ENVIRONMENT = staging
 WORKOS_CLIENT_ID = client_01KZMNQXBXWT2A807NZCE6V2HV
+WORKOS_AUDIENCE = client_01KZM6XXV1EP0G3YVNE0VHQ689
 WORKOS_ISSUER = https:/$()/fashionable-machine-85-staging.authkit.app
 CONVEX_URL = https:/$()/courteous-okapi-555.convex.cloud

@@ -3,5 +3,6 @@
 // Authentication policy is configured in WorkOS as email Magic Auth only.
 SYNC_ENVIRONMENT = production
 WORKOS_CLIENT_ID = client_01KZMNK73NWS9NDAPC3T54S2PE
+WORKOS_AUDIENCE = client_01KZM77VDNK8B2ABTB2PNTJ9XX
 WORKOS_ISSUER = https:/$()/brave-mermaid-84.authkit.app
 CONVEX_URL = https:/$()/descriptive-gecko-343.convex.cloud

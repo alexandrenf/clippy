@@ -1,6 +1,7 @@
 use super::auth::WorkOsVerifier;
 use super::config::{
-    Environment, PRODUCTION_WORKOS_AUDIENCE, PRODUCTION_WORKOS_ISSUER, STAGING_WORKOS_AUDIENCE,
+    Environment, PRODUCTION_WORKOS_AUDIENCE, PRODUCTION_WORKOS_CLIENT_ID,
+    PRODUCTION_WORKOS_ISSUER, STAGING_WORKOS_AUDIENCE, STAGING_WORKOS_CLIENT_ID,
     STAGING_WORKOS_ISSUER,
 };
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -38,7 +39,7 @@ pub async fn sign_in(environment: Environment, db_path: &Path) -> Result<(), Str
 
     let code = receive_callback(&listener, &state).await?;
     let tokens = exchange_code(&config, &code, &verifier).await?;
-    let workos = WorkOsVerifier::new(config.issuer.to_string(), config.client_id.clone())
+    let workos = WorkOsVerifier::new(config.issuer.to_string(), config.audience.clone())
         .map_err(|_| "WorkOS configuration is invalid".to_string())?;
     let principal = workos
         .verify(&tokens.access_token)
@@ -70,7 +71,7 @@ pub async fn is_signed_in(environment: Environment, db_path: &Path) -> bool {
         Some(session) => session,
         None => return false,
     };
-    let verifier = match WorkOsVerifier::new(config.issuer.to_string(), config.client_id) {
+    let verifier = match WorkOsVerifier::new(config.issuer.to_string(), config.audience) {
         Ok(verifier) => verifier,
         Err(_) => return false,
     };
@@ -136,7 +137,7 @@ pub async fn refresh_access_token(
         .json()
         .await
         .map_err(|_| "AuthKit returned an invalid refresh response".to_string())?;
-    let verifier = WorkOsVerifier::new(config.issuer.to_string(), config.client_id)
+    let verifier = WorkOsVerifier::new(config.issuer.to_string(), config.audience)
         .map_err(|_| "WorkOS configuration is invalid".to_string())?;
     verifier
         .verify(&tokens.access_token)
@@ -167,29 +168,42 @@ pub fn access_token_expires_soon(token: &str) -> bool {
 struct LoginConfig {
     issuer: Url,
     client_id: String,
+    audience: String,
 }
 
 impl LoginConfig {
     fn load(environment: Environment) -> Result<Self, String> {
-        let (issuer, client_id) = match environment {
+        let (issuer, client_id, audience) = match environment {
             Environment::Staging => (
                 std::env::var("CLIPPY_STAGING_WORKOS_ISSUER")
                     .unwrap_or_else(|_| STAGING_WORKOS_ISSUER.into()),
                 std::env::var("CLIPPY_STAGING_WORKOS_CLIENT_ID")
+                    .unwrap_or_else(|_| STAGING_WORKOS_CLIENT_ID.into()),
+                std::env::var("CLIPPY_STAGING_WORKOS_AUDIENCE")
                     .unwrap_or_else(|_| STAGING_WORKOS_AUDIENCE.into()),
             ),
             Environment::Production => (
                 std::env::var("CLIPPY_PRODUCTION_WORKOS_ISSUER")
                     .unwrap_or_else(|_| PRODUCTION_WORKOS_ISSUER.into()),
                 std::env::var("CLIPPY_PRODUCTION_WORKOS_CLIENT_ID")
+                    .unwrap_or_else(|_| PRODUCTION_WORKOS_CLIENT_ID.into()),
+                std::env::var("CLIPPY_PRODUCTION_WORKOS_AUDIENCE")
                     .unwrap_or_else(|_| PRODUCTION_WORKOS_AUDIENCE.into()),
             ),
         };
         let issuer = Url::parse(&issuer).map_err(|_| "WorkOS issuer is invalid".to_string())?;
-        if issuer.scheme() != "https" || issuer.host_str().is_none() || client_id.is_empty() {
+        if issuer.scheme() != "https"
+            || issuer.host_str().is_none()
+            || client_id.is_empty()
+            || audience.is_empty()
+        {
             return Err("WorkOS configuration is invalid".into());
         }
-        Ok(Self { issuer, client_id })
+        Ok(Self {
+            issuer,
+            client_id,
+            audience,
+        })
     }
 
     fn authorize_url(&self, challenge: &str, state: &str, nonce: &str) -> Result<Url, String> {

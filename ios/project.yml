@@ -43,6 +43,7 @@ targets:
           - UIInterfaceOrientationPortrait
         WORKOS_ISSUER: $(WORKOS_ISSUER)
         WORKOS_CLIENT_ID: $(WORKOS_CLIENT_ID)
+        WORKOS_AUDIENCE: $(WORKOS_AUDIENCE)
         WORKOS_REDIRECT_URI: clippy-sync://auth/callback
         CONVEX_URL: $(CONVEX_URL)
         SYNC_ENVIRONMENT: $(SYNC_ENVIRONMENT)

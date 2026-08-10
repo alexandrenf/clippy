@@ -105,7 +105,7 @@ backed by the private `clippy-staging` and `clippy-production` R2 buckets.
 
 1. Copy `.env.example` to `.env.local` and run `npm run convex:dev` to connect a
    development deployment. Convex will generate its normal `_generated` files.
-2. In each Convex deployment set `WORKOS_ISSUER`, `WORKOS_CLIENT_ID`,
+2. In each Convex deployment set `WORKOS_ISSUER`, `WORKOS_AUDIENCE`,
    `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and
    `R2_SECRET_ACCESS_KEY` with `npx convex env set`. Use an R2 token scoped only
    to the selected bucket.

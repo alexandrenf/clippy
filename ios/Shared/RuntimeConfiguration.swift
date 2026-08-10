@@ -6,6 +6,7 @@ public struct RuntimeConfiguration: Sendable {
     public let environment: Environment
     public let workOSIssuer: URL
     public let workOSClientID: String
+    public let workOSAudience: String
     public let redirectURI: URL
     public let convexURL: URL
 
@@ -16,6 +17,7 @@ public struct RuntimeConfiguration: Sendable {
         self.environment = environment
         workOSIssuer = try Self.httpsURL(bundle.required("WORKOS_ISSUER"))
         workOSClientID = try bundle.required("WORKOS_CLIENT_ID")
+        workOSAudience = try bundle.required("WORKOS_AUDIENCE")
         guard let redirect = URL(string: try bundle.required("WORKOS_REDIRECT_URI")),
               redirect.scheme == "clippy-sync" else {
             throw ConfigurationError.invalidRedirect
