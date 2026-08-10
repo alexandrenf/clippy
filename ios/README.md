@@ -9,12 +9,11 @@ xcodegen generate --spec project.yml
 ```
 
 `Clippy Staging` and `Clippy Production` use separate WorkOS and Convex public
-routing values. Replace the placeholder `CONVEX_URL` in each environment's
-xcconfig after creating the deployments. Never put WorkOS secrets, R2 keys,
-OAuth tokens, or workspace encryption keys in an xcconfig. OAuth sessions are
-stored in an app-private, file-protected, no-backup file so reads never trigger
-a Keychain password prompt. Only the workspace encryption key uses
-ThisDeviceOnly Keychain storage.
+routing values committed in each environment's xcconfig. Never put WorkOS
+secrets, R2 keys, OAuth tokens, or workspace encryption keys in an xcconfig.
+OAuth sessions are stored in an app-private, file-protected, no-backup file so
+reads never trigger a Keychain password prompt. Only the workspace encryption
+key uses ThisDeviceOnly Keychain storage.
 
 The phone uses the official Convex Swift client for an authenticated realtime
 subscription and small mutation/query calls. Attachments bypass Convex and move

@@ -199,14 +199,8 @@ async fn activate(
     }
     let workspace_id = workspace_id(&runtime.db_path, environment, create_workspace)?
         .ok_or_else(|| "No sync workspace exists yet".to_string())?;
-    let config = SyncConfig::for_environment(environment, workspace_id.clone()).map_err(
-        |error| match error {
-            config::ConfigError::MissingConvexUrl => {
-                "Set the Convex deployment URL before enabling sync".to_string()
-            }
-            _ => "Sync public configuration is invalid".to_string(),
-        },
-    )?;
+    let config = SyncConfig::for_environment(environment, workspace_id.clone())
+        .map_err(|_| "Sync public configuration is invalid".to_string())?;
     let mut token = auth_login::access_token(environment, &runtime.db_path)?;
     if auth_login::access_token_expires_soon(&token) {
         token = auth_login::refresh_access_token(environment, &runtime.db_path).await?;

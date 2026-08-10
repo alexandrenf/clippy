@@ -3,8 +3,10 @@ use url::Url;
 
 pub const STAGING_WORKOS_AUDIENCE: &str = "client_01KZMNQXBXWT2A807NZCE6V2HV";
 pub const STAGING_WORKOS_ISSUER: &str = "https://fashionable-machine-85-staging.authkit.app";
+pub const STAGING_CONVEX_URL: &str = "https://courteous-okapi-555.convex.cloud";
 pub const PRODUCTION_WORKOS_AUDIENCE: &str = "client_01KZMNK73NWS9NDAPC3T54S2PE";
 pub const PRODUCTION_WORKOS_ISSUER: &str = "https://brave-mermaid-84.authkit.app";
+pub const PRODUCTION_CONVEX_URL: &str = "https://descriptive-gecko-343.convex.cloud";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Environment {
@@ -53,7 +55,10 @@ impl SyncConfig {
                     Environment::Production => "CLIPPY_PRODUCTION_CONVEX_URL",
                 })
             })
-            .ok_or(ConfigError::MissingConvexUrl)?;
+            .unwrap_or_else(|| match environment {
+                Environment::Staging => STAGING_CONVEX_URL.to_string(),
+                Environment::Production => PRODUCTION_CONVEX_URL.to_string(),
+            });
         let convex_url = parse_convex_url(&convex_url)?;
         let issuer = value("CLIPPY_WORKOS_ISSUER").unwrap_or_else(|| match environment {
             Environment::Staging => STAGING_WORKOS_ISSUER.to_string(),
@@ -109,7 +114,6 @@ fn parse_https_origin(value: &str) -> Result<Url, ConfigError> {
 pub enum ConfigError {
     InvalidEnvironment,
     MissingWorkspace,
-    MissingConvexUrl,
     MissingAudience,
     InvalidUrl,
     UntrustedConvexUrl,

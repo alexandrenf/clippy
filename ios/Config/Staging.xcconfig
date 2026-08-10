@@ -2,5 +2,4 @@
 SYNC_ENVIRONMENT = staging
 WORKOS_CLIENT_ID = client_01KZMNQXBXWT2A807NZCE6V2HV
 WORKOS_ISSUER = https:/$()/fashionable-machine-85-staging.authkit.app
-// Replace after creating the staging Convex deployment.
-CONVEX_URL = https:/$()/replace-with-staging.convex.cloud
+CONVEX_URL = https:/$()/courteous-okapi-555.convex.cloud

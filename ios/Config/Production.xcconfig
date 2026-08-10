@@ -4,5 +4,4 @@
 SYNC_ENVIRONMENT = production
 WORKOS_CLIENT_ID = client_01KZMNK73NWS9NDAPC3T54S2PE
 WORKOS_ISSUER = https:/$()/brave-mermaid-84.authkit.app
-// Replace after creating the production Convex deployment.
-CONVEX_URL = https:/$()/replace-with-production.convex.cloud
+CONVEX_URL = https:/$()/descriptive-gecko-343.convex.cloud

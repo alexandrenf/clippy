@@ -98,11 +98,10 @@ Device revocation and workspace-key rotation are still required before treating
 sync as production-ready. A compromised unlocked enrolled device can read its
 local plaintext; centralized sync cannot protect against endpoint compromise.
 
-## Setup later
+## Deployment setup
 
-Nothing here requires account credentials to build or test. When the accounts
-are ready, create separate Convex deployments and R2 buckets for staging and
-production.
+The `clippy` Convex project uses separate staging and production deployments,
+backed by the private `clippy-staging` and `clippy-production` R2 buckets.
 
 1. Copy `.env.example` to `.env.local` and run `npm run convex:dev` to connect a
    development deployment. Convex will generate its normal `_generated` files.
@@ -110,10 +109,9 @@ production.
    `R2_ACCOUNT_ID`, `R2_BUCKET`, `R2_ACCESS_KEY_ID`, and
    `R2_SECRET_ACCESS_KEY` with `npx convex env set`. Use an R2 token scoped only
    to the selected bucket.
-3. Set `CLIPPY_STAGING_CONVEX_URL` and `CLIPPY_PRODUCTION_CONVEX_URL` for desktop
-   builds. `CLIPPY_CONVEX_URL` is a local override.
-4. Replace the `CONVEX_URL` placeholders in `ios/Config/Staging.xcconfig` and
-   `ios/Config/Production.xcconfig`.
+3. Desktop and iOS builds carry only the public staging and production Convex
+   URLs. `CLIPPY_CONVEX_URL` remains a local desktop override.
+4. Keep R2 credentials only in the matching Convex deployment environment.
 5. Run `npm run convex:deploy` for the selected deployment. Verify WorkOS JWT
    issuer/audience and R2 bucket isolation separately in staging and production.
 
