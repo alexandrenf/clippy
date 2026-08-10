@@ -27,8 +27,14 @@ targets:
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:
               - clippy-sync
+        LSRequiresIPhoneOS: true
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations: {}
         UILaunchStoryboardName: LaunchScreen
         UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
         WORKOS_ISSUER: $(WORKOS_ISSUER)
         WORKOS_CLIENT_ID: $(WORKOS_CLIENT_ID)
         WORKOS_REDIRECT_URI: clippy-sync://auth/callback
@@ -48,7 +54,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.clippy.mobile
         PRODUCT_NAME: Clippy
         MARKETING_VERSION: 1.0.0
-        CURRENT_PROJECT_VERSION: 2
+        CURRENT_PROJECT_VERSION: 4
         DEVELOPMENT_TEAM: HL8KH2NA9S
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
