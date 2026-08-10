@@ -58,6 +58,25 @@ import Testing
     #expect(hidden.nextDelay(jitterUnit: 0.5, hasLocalOperations: true) == 0)
 }
 
+@Test func accountWorkspaceRoutingRecoversStaleKeychainState() {
+    #expect(AccountWorkspaceRoutingDecision.resolve(
+        localWorkspaceId: nil,
+        accountWorkspaceId: "workspace-new"
+    ) == .enroll)
+    #expect(AccountWorkspaceRoutingDecision.resolve(
+        localWorkspaceId: "workspace-current",
+        accountWorkspaceId: "workspace-current"
+    ) == .keepLocalWorkspace)
+    #expect(AccountWorkspaceRoutingDecision.resolve(
+        localWorkspaceId: "workspace-legacy",
+        accountWorkspaceId: "workspace-current"
+    ) == .resetAndEnroll)
+    #expect(AccountWorkspaceRoutingDecision.resolve(
+        localWorkspaceId: "workspace-legacy",
+        accountWorkspaceId: nil
+    ) == .resetAndEnroll)
+}
+
 @Test func sealedPayloadAuthenticatesItsContext() throws {
     let key = try WorkspaceKey(data: Data(repeating: 9, count: 32))
     let envelope = try SyncCrypto.seal(Data("private".utf8), key: key, aad: Data("workspace-1".utf8))
