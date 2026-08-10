@@ -50,7 +50,8 @@ public struct URLSessionJWKSLoader: JWKSLoading, Sendable {
 /// the PKCS#1 public-key representation expected by Security.framework.
 public actor JWTVerifier {
     private let issuer: URL
-    private let audience: String
+    private let accessTokenAudience: String
+    private let idTokenAudience: String
     private let loader: any JWKSLoading
     private let now: @Sendable () -> Date
     private let cacheLifetime: TimeInterval
@@ -60,6 +61,7 @@ public actor JWTVerifier {
     public init(
         issuer: URL,
         audience: String,
+        idTokenAudience: String? = nil,
         session: URLSession = .shared,
         cacheLifetime: TimeInterval = 3_600,
         now: @escaping @Sendable () -> Date = { Date() }
@@ -67,6 +69,7 @@ public actor JWTVerifier {
         try self.init(
             issuer: issuer,
             audience: audience,
+            idTokenAudience: idTokenAudience,
             loader: URLSessionJWKSLoader(session: session),
             cacheLifetime: cacheLifetime,
             now: now
@@ -76,17 +79,20 @@ public actor JWTVerifier {
     public init(
         issuer: URL,
         audience: String,
+        idTokenAudience: String? = nil,
         loader: any JWKSLoading,
         cacheLifetime: TimeInterval = 3_600,
         now: @escaping @Sendable () -> Date = { Date() }
     ) throws {
+        let idTokenAudience = idTokenAudience ?? audience
         guard issuer.scheme == "https", issuer.host != nil,
               issuer.user == nil, issuer.password == nil,
-              !audience.isEmpty, cacheLifetime >= 0 else {
+              !audience.isEmpty, !idTokenAudience.isEmpty, cacheLifetime >= 0 else {
             throw JWTVerificationError.invalidConfiguration
         }
         self.issuer = issuer
-        self.audience = audience
+        accessTokenAudience = audience
+        self.idTokenAudience = idTokenAudience
         self.loader = loader
         self.cacheLifetime = cacheLifetime
         self.now = now
@@ -147,11 +153,11 @@ public actor JWTVerifier {
         }
         switch kind {
         case .access:
-            guard claims.aud?.values.contains(audience) == true else {
+            guard claims.aud?.values.contains(accessTokenAudience) == true else {
                 throw JWTVerificationError.wrongAudience
             }
         case .id:
-            guard claims.aud?.values.contains(audience) == true else {
+            guard claims.aud?.values.contains(idTokenAudience) == true else {
                 throw JWTVerificationError.wrongAudience
             }
         }

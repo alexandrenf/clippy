@@ -31,6 +31,7 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
         guard let verifier = verifier ?? (try? JWTVerifier(
             issuer: configuration.workOSIssuer,
             audience: configuration.workOSAudience,
+            idTokenAudience: configuration.workOSClientID,
             session: session
         )) else {
             preconditionFailure("WorkOS JWT verifier configuration is invalid")

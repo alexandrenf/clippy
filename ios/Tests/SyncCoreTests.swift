@@ -393,6 +393,33 @@ import Testing
     #expect(claims.expiresAt == now.addingTimeInterval(300))
 }
 
+@Test func jwtVerifierUsesSeparateAccessAndIDTokenAudiences() async throws {
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    let fixture = try JWTFixture()
+    let verifier = try JWTVerifier(
+        issuer: fixture.issuer,
+        audience: "api-audience",
+        idTokenAudience: "mobile-client",
+        loader: StaticJWKSLoader(data: fixture.jwks),
+        now: { now }
+    )
+    let accessToken = try fixture.token(
+        audience: "api-audience",
+        expiresAt: now.addingTimeInterval(300)
+    )
+    let idToken = try fixture.token(
+        audience: "mobile-client",
+        expiresAt: now.addingTimeInterval(300),
+        nonce: "nonce-1"
+    )
+
+    _ = try await verifier.verify(accessToken)
+    _ = try await verifier.verify(idToken, kind: .id, expectedNonce: "nonce-1")
+    await #expect(throws: JWTVerificationError.wrongAudience) {
+        try await verifier.verify(accessToken, kind: .id)
+    }
+}
+
 @Test func jwtVerifierRejectsForgedSignature() async throws {
     let now = Date(timeIntervalSince1970: 2_000_000_000)
     let trusted = try JWTFixture()
