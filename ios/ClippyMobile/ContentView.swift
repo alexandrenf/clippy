@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var auth: AuthController
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var newSectionName = ""
     @State private var itemDrafts: [UUID: String] = [:]
@@ -22,7 +23,7 @@ struct ContentView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: ClippySpace.l) {
                         if !auth.signedIn {
-                            signedOutCard
+                            signedOutContent
                         } else if model.library.actorId.isEmpty {
                             statusBanner
                             accountConnectionCard
@@ -44,7 +45,8 @@ struct ContentView: View {
                 .scrollIndicators(.hidden)
             }
             .navigationTitle("Clippy")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarColorScheme(colorScheme, for: .navigationBar)
             .toolbar {
                 if auth.signedIn {
                     if !model.library.actorId.isEmpty {
@@ -134,51 +136,70 @@ struct ContentView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var signedOutCard: some View {
-        card {
-            VStack(alignment: .leading, spacing: ClippySpace.l) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: ClippyRadius.m, style: .continuous)
-                        .fill(ClippyPalette.accentPastel)
-                    Rectangle()
-                        .fill(ClippyPalette.accentPastelStrong)
-                        .frame(width: 18, height: 4)
-                        .rotationEffect(.degrees(-42))
-                        .offset(x: 13, y: -13)
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(ClippyPalette.accent)
-                        .rotationEffect(.degrees(-10))
-                }
-                .frame(width: 48, height: 48)
+    private var signedOutContent: some View {
+        VStack(alignment: .leading, spacing: ClippySpace.xl) {
+            deviceConnectionMark
 
-                VStack(alignment: .leading, spacing: ClippySpace.s) {
-                    Text("Your lists, on every device")
-                        .font(ClippyType.heading)
-                        .foregroundStyle(ClippyPalette.text)
-                    Text("Use the same email as your Mac. Clippy connects the rest automatically.")
-                        .font(ClippyType.body)
-                        .foregroundStyle(ClippyPalette.muted)
-                        .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            VStack(alignment: .leading, spacing: ClippySpace.s) {
+                Text("One account. Every list.")
+                    .font(ClippyType.display)
+                    .tracking(-0.5)
+                    .foregroundStyle(ClippyPalette.text)
+                Text("Sign in with the email you use on your Mac. Clippy connects your devices automatically.")
+                    .font(ClippyType.body)
+                    .foregroundStyle(ClippyPalette.muted)
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-                signInButton
+            signInButton
 
-                if let error = auth.errorMessage {
-                    Label(error, systemImage: "exclamationmark.circle.fill")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(ClippyPalette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            if let error = auth.errorMessage {
+                Label(error, systemImage: "exclamationmark.circle.fill")
+                    .font(ClippyType.captionMedium)
+                    .foregroundStyle(ClippyPalette.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
-                HStack(spacing: 7) {
-                    Image(systemName: "lock.fill")
-                    Text("Magic link only. No password stored.")
-                }
+            Label("Magic link only — no password stored", systemImage: "lock.fill")
                 .font(ClippyType.caption)
                 .foregroundStyle(ClippyPalette.muted)
+        }
+        .padding(.top, ClippySpace.xl)
+    }
+
+    private var deviceConnectionMark: some View {
+        HStack(spacing: ClippySpace.m) {
+            deviceMark(symbol: "macbook", label: "Mac")
+
+            HStack(spacing: ClippySpace.xs) {
+                Circle()
+                    .frame(width: 5, height: 5)
+                Rectangle()
+                    .frame(height: 1)
+                Circle()
+                    .frame(width: 5, height: 5)
             }
+            .foregroundStyle(ClippyPalette.accentPastelStrong)
+            .frame(maxWidth: .infinity)
+            .accessibilityHidden(true)
+
+            deviceMark(symbol: "iphone", label: "iPhone")
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Clippy connects your Mac and iPhone")
+    }
+
+    private func deviceMark(symbol: String, label: String) -> some View {
+        VStack(spacing: ClippySpace.s) {
+            Image(systemName: symbol)
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(ClippyPalette.accent)
+                .frame(width: 56, height: 56)
+                .background(ClippyPalette.accentPastel, in: RoundedRectangle(cornerRadius: ClippyRadius.l, style: .continuous))
+            Text(label)
+                .font(ClippyType.captionMedium)
+                .foregroundStyle(ClippyPalette.muted)
         }
     }
 
