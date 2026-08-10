@@ -20,15 +20,14 @@ struct ContentView: View {
                 ClippyPalette.canvas.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        appHeader
-                        statusBanner
-
+                    LazyVStack(alignment: .leading, spacing: ClippySpace.l) {
                         if !auth.signedIn {
                             signedOutCard
                         } else if model.library.actorId.isEmpty {
+                            statusBanner
                             accountConnectionCard
                         } else {
+                            statusBanner
                             librarySections
                         }
 
@@ -38,16 +37,42 @@ struct ContentView: View {
 
                         privacyFooter
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 14)
-                    .padding(.bottom, 30)
+                    .padding(.horizontal, ClippySpace.m)
+                    .padding(.top, ClippySpace.s)
+                    .padding(.bottom, ClippySpace.xl)
                 }
                 .scrollIndicators(.hidden)
             }
-            .toolbar(.hidden, for: .navigationBar)
+            .navigationTitle("Clippy")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                if auth.signedIn {
+                    if !model.library.actorId.isEmpty {
+                        ToolbarItem(placement: .primaryAction) {
+                            Button {
+                                model.syncNow()
+                            } label: {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                            }
+                            .disabled(model.syncState == .syncing)
+                            .accessibilityLabel("Sync now")
+                        }
+                    }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right") {
+                                auth.signOut()
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                        }
+                        .accessibilityLabel("Account options")
+                    }
+                }
+            }
         }
         .tint(ClippyPalette.accent)
-        .preferredColorScheme(.light)
         .sheet(item: $editingItem) { item in
             itemEditor(item)
         }
@@ -77,85 +102,25 @@ struct ContentView: View {
         }
     }
 
-    private var appHeader: some View {
-        HStack(spacing: 13) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .fill(ClippyPalette.accentPastel)
-                Image(systemName: "paperclip")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(ClippyPalette.accent)
-                    .rotationEffect(.degrees(-8))
-            }
-            .frame(width: 48, height: 48)
-            .overlay {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .stroke(ClippyPalette.accent.opacity(0.14), lineWidth: 1)
-            }
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Clippy")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .tracking(-0.8)
-                    .foregroundStyle(ClippyPalette.text)
-                Text("Your lists, wherever you are")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(ClippyPalette.muted)
-            }
-
-            Spacer(minLength: 8)
-
-            if !model.library.actorId.isEmpty {
-                Button {
-                    model.syncNow()
-                } label: {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 38, height: 38)
-                        .background(ClippyPalette.surface, in: Circle())
-                        .overlay { Circle().stroke(ClippyPalette.hairline, lineWidth: 1) }
-                }
-                .buttonStyle(ClippyIconButtonStyle())
-                .disabled(model.syncState == .syncing)
-                .accessibilityLabel("Sync now")
-            } else if auth.signedIn {
-                Menu {
-                    Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right") {
-                        auth.signOut()
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 17, weight: .semibold))
-                        .frame(width: 38, height: 38)
-                        .background(ClippyPalette.surface, in: Circle())
-                        .overlay { Circle().stroke(ClippyPalette.hairline, lineWidth: 1) }
-                }
-                .accessibilityLabel("Account options")
-            }
-        }
-    }
-
     private var statusBanner: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle().fill(statusTint)
-                Image(systemName: statusSymbol)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(statusAccent)
-            }
-            .frame(width: 38, height: 38)
+        HStack(spacing: ClippySpace.s) {
+            Image(systemName: statusSymbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(statusAccent)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(statusText)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(ClippyPalette.text)
-                Text(statusDetail)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(ClippyPalette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text(statusText)
+                .font(ClippyType.captionMedium)
+                .foregroundStyle(ClippyPalette.text)
 
-            Spacer(minLength: 8)
+            Text("·")
+                .foregroundStyle(ClippyPalette.tertiary)
+
+            Text(statusDetail)
+                .font(ClippyType.caption)
+                .foregroundStyle(ClippyPalette.muted)
+                .lineLimit(1)
+
+            Spacer(minLength: ClippySpace.xs)
 
             if model.syncState == .syncing {
                 ProgressView()
@@ -163,42 +128,42 @@ struct ContentView: View {
                     .tint(statusAccent)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 13)
-        .background(statusBackground, in: RoundedRectangle(cornerRadius: 19, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 19, style: .continuous)
-                .stroke(statusAccent.opacity(0.12), lineWidth: 1)
-        }
+        .padding(.horizontal, ClippySpace.m)
+        .frame(minHeight: 44)
+        .modifier(ClippyStatusSurface(tint: statusTint))
         .accessibilityElement(children: .combine)
     }
 
     private var signedOutCard: some View {
         card {
-            VStack(alignment: .leading, spacing: 18) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Connect your Clippy")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .tracking(-0.35)
+            VStack(alignment: .leading, spacing: ClippySpace.l) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: ClippyRadius.m, style: .continuous)
+                        .fill(ClippyPalette.accentPastel)
+                    Rectangle()
+                        .fill(ClippyPalette.accentPastelStrong)
+                        .frame(width: 18, height: 4)
+                        .rotationEffect(.degrees(-42))
+                        .offset(x: 13, y: -13)
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(ClippyPalette.accent)
+                        .rotationEffect(.degrees(-10))
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: ClippySpace.s) {
+                    Text("Your lists, on every device")
+                        .font(ClippyType.heading)
                         .foregroundStyle(ClippyPalette.text)
-                    Text("Sign in with the same account as your Mac. Your lists and files connect automatically—no pairing code needed.")
-                        .font(.system(size: 15, weight: .regular))
+                    Text("Use the same email as your Mac. Clippy connects the rest automatically.")
+                        .font(ClippyType.body)
                         .foregroundStyle(ClippyPalette.muted)
-                        .lineSpacing(3)
+                        .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Button {
-                    auth.signIn()
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: "envelope.fill")
-                        Text("Continue with email")
-                        Spacer()
-                        Image(systemName: "arrow.right")
-                    }
-                }
-                .buttonStyle(ClippyPrimaryButtonStyle())
+                signInButton
 
                 if let error = auth.errorMessage {
                     Label(error, systemImage: "exclamationmark.circle.fill")
@@ -209,9 +174,9 @@ struct ContentView: View {
 
                 HStack(spacing: 7) {
                     Image(systemName: "lock.fill")
-                    Text("Magic link sign-in · no password stored")
+                    Text("Magic link only. No password stored.")
                 }
-                .font(.system(size: 12, weight: .medium))
+                .font(ClippyType.caption)
                 .foregroundStyle(ClippyPalette.muted)
             }
         }
@@ -219,25 +184,24 @@ struct ContentView: View {
 
     private var accountConnectionCard: some View {
         card {
-            VStack(alignment: .leading, spacing: 17) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Connecting your account")
-                        .font(.system(size: 22, weight: .bold, design: .rounded))
-                        .tracking(-0.35)
+            VStack(alignment: .leading, spacing: ClippySpace.m) {
+                VStack(alignment: .leading, spacing: ClippySpace.s) {
+                    Text("Finding your Mac")
+                        .font(ClippyType.heading)
                         .foregroundStyle(ClippyPalette.text)
-                    Text("Clippy is securely finding your Mac and bringing over your lists. Keep Clippy open on the Mac for a moment.")
-                        .font(.system(size: 15))
+                    Text("Keep Clippy open there for a moment. Your lists will appear here without a pairing code.")
+                        .font(ClippyType.body)
                         .foregroundStyle(ClippyPalette.muted)
-                        .lineSpacing(3)
+                        .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                HStack(spacing: 11) {
+                HStack(spacing: ClippySpace.s) {
                     ProgressView()
                         .controlSize(.small)
                         .tint(ClippyPalette.accent)
-                    Text(model.connectingAccount ? "Looking for your Mac…" : "Waiting for your Mac…")
-                        .font(.system(size: 13, weight: .semibold))
+                    Text(model.connectingAccount ? "Looking…" : "Waiting for your Mac…")
+                        .font(ClippyType.captionMedium)
                         .foregroundStyle(ClippyPalette.muted)
                 }
             }
@@ -245,42 +209,30 @@ struct ContentView: View {
     }
 
     private var librarySections: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: ClippySpace.m) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Your lists")
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .tracking(-0.3)
+                Text("Lists")
+                    .font(ClippyType.sectionTitle)
+                    .tracking(-0.4)
                     .foregroundStyle(ClippyPalette.text)
                 Spacer()
-                Text("\(model.library.sections.count)")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(ClippyPalette.accent)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 4)
-                    .background(ClippyPalette.accentPastel, in: Capsule())
+                Text("\(model.library.sections.count) \(model.library.sections.count == 1 ? "list" : "lists")")
+                    .font(ClippyType.caption)
+                    .foregroundStyle(ClippyPalette.muted)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: ClippySpace.s) {
                 TextField("New list name", text: $newSectionName)
+                    .font(ClippyType.body)
                     .textInputAutocapitalization(.sentences)
                     .submitLabel(.done)
                     .onSubmit(createSection)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 11)
-                    .background(ClippyPalette.surface, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .stroke(ClippyPalette.hairline, lineWidth: 1)
-                    }
+                    .padding(.horizontal, ClippySpace.m)
+                    .frame(minHeight: 52)
+                    .background(ClippyPalette.paper, in: RoundedRectangle(cornerRadius: ClippyRadius.m, style: .continuous))
+                    .shadow(color: ClippyPalette.shadow, radius: 8, y: 3)
 
-                Button(action: createSection) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 16, weight: .bold))
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(ClippySquareButtonStyle())
-                .disabled(newSectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel("Create list")
+                createSectionButton
             }
 
             ForEach(model.library.sections) { section in
@@ -288,33 +240,29 @@ struct ContentView: View {
             }
 
             if model.library.sections.isEmpty {
-                VStack(spacing: 10) {
-                    Image(systemName: "square.stack.3d.up")
-                        .font(.system(size: 26, weight: .medium))
-                        .foregroundStyle(ClippyPalette.accent)
-                    Text("Create your first list")
-                        .font(.system(size: 16, weight: .semibold))
+                ContentUnavailableView {
+                    Label("No lists yet", systemImage: "list.bullet.clipboard")
                         .foregroundStyle(ClippyPalette.text)
-                    Text("It will appear on your Mac after the next sync.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(ClippyPalette.muted)
+                } description: {
+                    Text("Name one above. It will appear on your Mac automatically.")
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 28)
-                .background(ClippyPalette.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .padding(.vertical, ClippySpace.l)
             }
         }
     }
 
     private func sectionCard(_ section: LocalSection) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(ClippyPalette.accentPastelStrong)
-                    .frame(width: 7, height: 22)
+            HStack(spacing: ClippySpace.s) {
+                Image(systemName: "list.bullet")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(ClippyPalette.accent)
+                    .frame(width: 28, height: 28)
+                    .background(ClippyPalette.accentPastel, in: RoundedRectangle(cornerRadius: ClippyRadius.s, style: .continuous))
 
                 Text(section.name)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(ClippyType.subheading)
                     .foregroundStyle(ClippyPalette.text)
                 Spacer()
 
@@ -330,21 +278,22 @@ struct ContentView: View {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(ClippyPalette.muted)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("List options")
             }
-            .padding(.horizontal, 15)
-            .padding(.vertical, 13)
+            .padding(.leading, ClippySpace.m)
+            .padding(.trailing, ClippySpace.s)
+            .padding(.vertical, ClippySpace.s)
 
             Divider().overlay(ClippyPalette.hairline)
 
             let items = model.library.items(in: section.id)
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 itemRow(item)
-                    .padding(.horizontal, 15)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, ClippySpace.m)
+                    .padding(.vertical, ClippySpace.s)
                 if index < items.count - 1 {
                     Divider()
                         .overlay(ClippyPalette.hairline)
@@ -352,7 +301,7 @@ struct ContentView: View {
                 }
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: ClippySpace.s) {
                 Image(systemName: "plus")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundStyle(ClippyPalette.accent)
@@ -364,31 +313,33 @@ struct ContentView: View {
                 .onSubmit { createItem(in: section.id) }
 
                 Button("Add") { createItem(in: section.id) }
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(ClippyType.captionMedium)
                     .foregroundStyle(ClippyPalette.accent)
+                    .frame(minWidth: 44, minHeight: 44)
                     .disabled(itemDrafts[section.id, default: ""].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .padding(.horizontal, 15)
-            .padding(.vertical, 12)
-            .background(ClippyPalette.field.opacity(0.78))
+            .padding(.horizontal, ClippySpace.m)
+            .padding(.vertical, ClippySpace.xs)
+            .background(ClippyPalette.field)
         }
-        .background(ClippyPalette.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(ClippyPalette.paper)
+        .clipShape(RoundedRectangle(cornerRadius: ClippyRadius.l, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(ClippyPalette.hairline, lineWidth: 1)
+            RoundedRectangle(cornerRadius: ClippyRadius.l, style: .continuous)
+                .stroke(ClippyPalette.hairline.opacity(0.75), lineWidth: 0.5)
         }
     }
 
     private func itemRow(_ item: LocalItem) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 11) {
+        VStack(alignment: .leading, spacing: ClippySpace.s) {
+            HStack(alignment: .top, spacing: ClippySpace.s) {
                 Button {
                     model.setItemCompleted(id: item.id, done: !item.done)
                 } label: {
                     Image(systemName: item.done ? "checkmark.circle.fill" : "circle")
                         .font(.system(size: 20, weight: .medium))
                         .foregroundStyle(item.done ? ClippyPalette.accent : ClippyPalette.muted.opacity(0.72))
+                        .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
 
@@ -397,11 +348,12 @@ struct ContentView: View {
                     editingItem = item
                 } label: {
                     Text(item.projectedContent.isEmpty ? "Empty item" : item.projectedContent)
-                        .font(.system(size: 15))
+                        .font(ClippyType.body)
                         .foregroundStyle(item.done ? ClippyPalette.muted : ClippyPalette.text)
                         .strikethrough(item.done, color: ClippyPalette.muted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .multilineTextAlignment(.leading)
+                        .frame(minHeight: 44, alignment: .leading)
                 }
                 .buttonStyle(.plain)
 
@@ -421,7 +373,7 @@ struct ContentView: View {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(ClippyPalette.muted)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
                 .accessibilityLabel("Item options")
@@ -444,8 +396,8 @@ struct ContentView: View {
                                 .font(.system(size: 11, weight: .medium))
                                 .foregroundStyle(ClippyPalette.muted)
                         }
-                        .padding(10)
-                        .background(ClippyPalette.warningPastel, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .padding(ClippySpace.s)
+                        .background(ClippyPalette.warningPastel, in: RoundedRectangle(cornerRadius: ClippyRadius.s, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -472,7 +424,7 @@ struct ContentView: View {
                     .labelStyle(.iconOnly)
                     .buttonStyle(.plain)
                 }
-                .padding(.leading, 31)
+                    .padding(.leading, 44)
             }
         }
     }
@@ -485,12 +437,12 @@ struct ContentView: View {
                     .font(.system(size: 16))
                     .scrollContentBackground(.hidden)
                     .padding(14)
-                    .background(ClippyPalette.surface, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+                    .background(ClippyPalette.paper, in: RoundedRectangle(cornerRadius: ClippyRadius.l, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 17, style: .continuous)
                             .stroke(ClippyPalette.hairline, lineWidth: 1)
                     }
-                    .padding(20)
+                    .padding(ClippySpace.m)
             }
             .navigationTitle(item.content.hasConflict ? "Resolve conflict" : "Edit item")
             .navigationBarTitleDisplayMode(.inline)
@@ -512,41 +464,92 @@ struct ContentView: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .preferredColorScheme(.light)
     }
 
     private func messageCard(_ message: String) -> some View {
         Label(message, systemImage: "info.circle.fill")
-            .font(.system(size: 12.5, weight: .medium))
+            .font(ClippyType.caption)
             .foregroundStyle(ClippyPalette.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(ClippyPalette.surface.opacity(0.72), in: RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .padding(ClippySpace.m)
+            .background(ClippyPalette.field, in: RoundedRectangle(cornerRadius: ClippyRadius.m, style: .continuous))
     }
 
     private var privacyFooter: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: ClippySpace.s) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(ClippyPalette.accent)
                 .padding(.top, 1)
-            Text("Your content and files are encrypted on this device before syncing.")
-                .font(.system(size: 11.5, weight: .medium))
+            Text("End-to-end encrypted before sync")
+                .font(ClippyType.footnote)
                 .foregroundStyle(ClippyPalette.muted)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 4)
+        .padding(.horizontal, ClippySpace.xs)
     }
 
     private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
-            .padding(18)
+            .padding(ClippySpace.l)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(ClippyPalette.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(ClippyPalette.paper, in: RoundedRectangle(cornerRadius: ClippyRadius.l, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(ClippyPalette.hairline, lineWidth: 1)
+                RoundedRectangle(cornerRadius: ClippyRadius.l, style: .continuous)
+                    .stroke(ClippyPalette.hairline.opacity(0.75), lineWidth: 0.5)
             }
+    }
+
+    @ViewBuilder
+    private var signInButton: some View {
+        if #available(iOS 26.0, *) {
+            Button(action: auth.signIn) {
+                signInLabel
+                    .padding(.horizontal, ClippySpace.m)
+                    .frame(minHeight: 52)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(ClippyPalette.accent)
+        } else {
+            Button(action: auth.signIn) {
+                signInLabel
+            }
+            .buttonStyle(ClippyPrimaryButtonStyle())
+        }
+    }
+
+    private var signInLabel: some View {
+        HStack(spacing: 9) {
+            Image(systemName: "envelope.fill")
+            Text("Continue with email")
+            Spacer()
+            Image(systemName: "arrow.right")
+        }
+    }
+
+    @ViewBuilder
+    private var createSectionButton: some View {
+        if #available(iOS 26.0, *) {
+            Button(action: createSection) {
+                Image(systemName: "plus")
+                    .font(.system(size: 16, weight: .bold))
+                    .frame(width: 52, height: 52)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(ClippyPalette.accent)
+            .disabled(newSectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityLabel("Create list")
+        } else {
+            Button(action: createSection) {
+                Image(systemName: "plus")
+                    .font(.system(size: 16, weight: .bold))
+                    .frame(width: 52, height: 52)
+            }
+            .buttonStyle(ClippySquareButtonStyle())
+            .disabled(newSectionName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .accessibilityLabel("Create list")
+        }
     }
 
     private func createSection() {
@@ -617,19 +620,61 @@ struct ContentView: View {
 }
 
 private enum ClippyPalette {
-    static let canvas = Color(red: 220 / 255, green: 224 / 255, blue: 223 / 255)
-    static let surface = Color(red: 252 / 255, green: 252 / 255, blue: 250 / 255)
-    static let field = Color(red: 244 / 255, green: 246 / 255, blue: 245 / 255)
-    static let text = Color(red: 32 / 255, green: 33 / 255, blue: 31 / 255)
-    static let muted = Color(red: 101 / 255, green: 107 / 255, blue: 103 / 255)
-    static let hairline = Color.black.opacity(0.085)
-    static let accent = Color(red: 51 / 255, green: 135 / 255, blue: 232 / 255)
-    static let accentPastel = Color(red: 220 / 255, green: 235 / 255, blue: 251 / 255)
-    static let accentPastelStrong = Color(red: 174 / 255, green: 211 / 255, blue: 249 / 255)
-    static let success = Color(red: 35 / 255, green: 139 / 255, blue: 91 / 255)
-    static let warning = Color(red: 177 / 255, green: 105 / 255, blue: 26 / 255)
-    static let warningPastel = Color(red: 249 / 255, green: 237 / 255, blue: 218 / 255)
-    static let danger = Color(red: 190 / 255, green: 54 / 255, blue: 54 / 255)
+    static let canvas = Color(light: 0xF3F0EA, dark: 0x171817)
+    static let paper = Color(light: 0xFFFDF9, dark: 0x252624)
+    static let surface = paper
+    static let field = Color(light: 0xECE9E2, dark: 0x2E302D)
+    static let text = Color(light: 0x1C1D1B, dark: 0xF5F2EB)
+    static let muted = Color(light: 0x676A65, dark: 0xA9ACA5)
+    static let tertiary = Color(light: 0xA19F98, dark: 0x747770)
+    static let hairline = Color(light: 0xDEDAD1, dark: 0x3A3C38)
+    static let shadow = Color.black.opacity(0.055)
+    static let accent = Color(light: 0x3478B8, dark: 0x82B7E8)
+    static let accentPastel = Color(light: 0xE2EDF7, dark: 0x263A4B)
+    static let accentPastelStrong = Color(light: 0xB9D3EB, dark: 0x3B6486)
+    static let success = Color(light: 0x287B55, dark: 0x69C798)
+    static let warning = Color(light: 0xA8641C, dark: 0xE6A45F)
+    static let warningPastel = Color(light: 0xF6E9D6, dark: 0x493621)
+    static let danger = Color(light: 0xB93D3D, dark: 0xEF7B78)
+}
+
+private enum ClippyType {
+    static let display = Font.system(size: 30, weight: .bold, design: .serif)
+    static let sectionTitle = display
+    static let heading = Font.system(size: 17, weight: .semibold)
+    static let subheading = heading
+    static let body = Font.system(size: 16)
+    static let caption = Font.system(size: 12)
+    static let captionMedium = Font.system(size: 12, weight: .semibold)
+    static let footnote = caption
+}
+
+private enum ClippySpace {
+    static let xs: CGFloat = 4
+    static let s: CGFloat = 8
+    static let m: CGFloat = 16
+    static let l: CGFloat = 24
+    static let xl: CGFloat = 32
+}
+
+private enum ClippyRadius {
+    static let s: CGFloat = 8
+    static let m: CGFloat = 12
+    static let l: CGFloat = 16
+}
+
+private extension Color {
+    init(light: UInt32, dark: UInt32) {
+        self.init(uiColor: UIColor { traits in
+            let value = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(
+                red: CGFloat((value >> 16) & 0xFF) / 255,
+                green: CGFloat((value >> 8) & 0xFF) / 255,
+                blue: CGFloat(value & 0xFF) / 255,
+                alpha: 1
+            )
+        })
+    }
 }
 
 private struct ClippyPrimaryButtonStyle: ButtonStyle {
@@ -637,20 +682,16 @@ private struct ClippyPrimaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(isEnabled ? ClippyPalette.text : ClippyPalette.muted)
-            .padding(.horizontal, 15)
-            .padding(.vertical, 14)
+            .font(ClippyType.body.weight(.semibold))
+            .foregroundStyle(isEnabled ? Color.white : ClippyPalette.muted)
+            .padding(.horizontal, ClippySpace.m)
+            .frame(minHeight: 52)
             .frame(maxWidth: .infinity)
             .background(
-                isEnabled ? ClippyPalette.accentPastel : ClippyPalette.field,
-                in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+                isEnabled ? ClippyPalette.accent : ClippyPalette.field,
+                in: RoundedRectangle(cornerRadius: ClippyRadius.m, style: .continuous)
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(isEnabled ? ClippyPalette.accent.opacity(0.18) : ClippyPalette.hairline, lineWidth: 1)
-            }
-            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .opacity(configuration.isPressed ? 0.82 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
@@ -661,26 +702,25 @@ private struct ClippySquareButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(isEnabled ? ClippyPalette.accent : ClippyPalette.muted)
+            .foregroundStyle(isEnabled ? Color.white : ClippyPalette.muted)
             .background(
-                isEnabled ? ClippyPalette.accentPastel : ClippyPalette.field,
-                in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+                isEnabled ? ClippyPalette.accent : ClippyPalette.field,
+                in: RoundedRectangle(cornerRadius: ClippyRadius.m, style: .continuous)
             )
-            .overlay {
-                RoundedRectangle(cornerRadius: 13, style: .continuous)
-                    .stroke(isEnabled ? ClippyPalette.accent.opacity(0.16) : ClippyPalette.hairline, lineWidth: 1)
-            }
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
-private struct ClippyIconButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(ClippyPalette.accent)
-            .scaleEffect(configuration.isPressed ? 0.93 : 1)
-            .opacity(configuration.isPressed ? 0.7 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+private struct ClippyStatusSurface: ViewModifier {
+    let tint: Color
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            content.glassEffect(.regular.tint(tint), in: .capsule)
+        } else {
+            content.background(tint, in: Capsule())
+        }
     }
 }
