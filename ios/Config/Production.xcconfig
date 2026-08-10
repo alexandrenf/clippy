@@ -1,0 +1,11 @@
+// Production is intentionally isolated from staging. Supply these public values
+// in CI/local overrides only after the separate WorkOS production application
+// and exact AuthKit issuer exist. Authentication policy is configured in WorkOS
+// as six-digit email Magic Auth only; the app never carries an API key or secret.
+SYNC_ENVIRONMENT = production
+WORKOS_CLIENT_ID = client_01KZM77VDNK8B2ABTB2PNTJ9XX
+WORKOS_ISSUER = https:/$()/brave-mermaid-84.authkit.app
+// Safe placeholder: replace with the deployed relay URL. An empty value fails
+// closed during RuntimeConfiguration initialization.
+RELAY_BASE_URL = https:/$()/relay.saudecomalex.com
+SYNC_ENDPOINT_HOST_SUFFIX = clippy.saudecomalex.com

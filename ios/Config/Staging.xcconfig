@@ -1,0 +1,9 @@
+// Public staging metadata. No API key, client secret, token, or tunnel
+// credential belongs in this file.
+SYNC_ENVIRONMENT = staging
+WORKOS_CLIENT_ID = client_01KZM6XXV1EP0G3YVNE0VHQ689
+WORKOS_ISSUER = https:/$()/fashionable-machine-85-staging.authkit.app
+// Safe placeholder: replace with the deployed relay URL. An empty value fails
+// closed during RuntimeConfiguration initialization.
+RELAY_BASE_URL = https:/$()/relay-staging.saudecomalex.com
+SYNC_ENDPOINT_HOST_SUFFIX = clippy-staging.saudecomalex.com
