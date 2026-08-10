@@ -212,6 +212,41 @@ import Testing
     #expect(view.items.first?.sectionId == view.sections.first?.id)
 }
 
+@Test func itemCanMoveBackToTheUnfiledList() async throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let workspace = "workspace-null-section"
+    let actor = "47cde27b-9808-4f93-96ed-1d6f24535fa8"
+    let sectionId = "7dfd1243bc395d90f55e9a131c60acf4"
+    let itemId = "191aa407e685fc9f9f4e82e5f1092efd"
+    let store = try LocalSyncStore(workspaceId: workspace, baseDirectory: directory)
+
+    _ = try await store.applyRemotePayload(SyncPayload(
+        workspaceId: workspace,
+        frontier: VersionVector([actor: 2]),
+        operations: [
+            SyncOperation(
+                schemaVersion: 1,
+                workspaceId: workspace,
+                entityKind: "item",
+                entityId: itemId,
+                dot: Dot(actorId: actor, counter: 1),
+                mutation: .setMetadata(field: "sectionId", value: .string(sectionId))
+            ),
+            SyncOperation(
+                schemaVersion: 1,
+                workspaceId: workspace,
+                entityKind: "item",
+                entityId: itemId,
+                dot: Dot(actorId: actor, counter: 2),
+                mutation: .setMetadata(field: "sectionId", value: .null)
+            ),
+        ]
+    ))
+
+    #expect(await store.view().items.first?.sectionId == nil)
+}
+
 @Test func replicaRejectsCausalGapsInsteadOfInventingObservedHistory() async throws {
     let directory = temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }

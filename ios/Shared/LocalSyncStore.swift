@@ -839,6 +839,17 @@ public actor LocalSyncStore {
             )
             item.sectionId = sectionId
             state.items[id] = item
+        case ("item", "sectionId", .null):
+            var item = state.items[id] ?? LocalItem(
+                id: id,
+                sectionId: nil,
+                createdAt: nil,
+                content: ContentRegister(),
+                done: false,
+                isDeleted: false
+            )
+            item.sectionId = nil
+            state.items[id] = item
         case let ("item", "createdAt", .number(createdAt))
             where createdAt >= 0 &&
                 createdAt <= maxExactlyRepresentableJSONInteger &&
