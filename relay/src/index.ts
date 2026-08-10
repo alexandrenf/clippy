@@ -256,13 +256,19 @@ async function handleConnect(
   });
 
   const mintUrl = new URL("/v1/connect/mint", `${endpoint.http_base_url}/`);
-  const response = await fetch(mintUrl, {
-    method: "POST",
-    redirect: "error",
-    signal: AbortSignal.timeout(15_000),
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ proof }),
-  });
+  let response: Response;
+  try {
+    response = await requestEnvironmentMint(mintUrl, proof);
+  } catch (error) {
+    // The URL and proof are deliberately omitted. Fetch failures from the
+    // Cloudflare edge are otherwise collapsed into an opaque Worker 500,
+    // making a tunnel routing problem indistinguishable from relay failure.
+    console.error("environment_mint_fetch_failed", {
+      kind: error instanceof Error ? error.name : typeof error,
+      detail: error instanceof Error ? error.message.slice(0, 160) : "unknown",
+    });
+    throw new ApiError(502, "environment_unreachable", "The Mac sync endpoint could not be reached");
+  }
   if (!response.ok) {
     throw new ApiError(502, "environment_mint_failed", "The environment rejected the mint request");
   }
@@ -306,6 +312,23 @@ async function handleConnect(
     bootstrap_credential: mint.bootstrap_credential,
     expires_at: mint.expires_at,
     client_jkt: mint.client_jkt,
+  });
+}
+
+export async function requestEnvironmentMint(
+  url: URL,
+  proof: string,
+  fetcher: typeof fetch = fetch,
+): Promise<Response> {
+  return fetcher(url, {
+    method: "POST",
+    // Cloudflare Workers implements `follow` and `manual`; the browser-only
+    // `error` mode throws before any network request reaches the tunnel.
+    // Manual still fails closed because every 3xx response is non-2xx below.
+    redirect: "manual",
+    signal: AbortSignal.timeout(15_000),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ proof }),
   });
 }
 

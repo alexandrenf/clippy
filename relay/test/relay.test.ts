@@ -15,6 +15,7 @@ import {
   verifyRelayToken,
 } from "../src/crypto";
 import { consumeLinkChallenge, createLinkChallenge, loadLinkChallenge } from "../src/db";
+import { requestEnvironmentMint } from "../src/index";
 
 beforeAll(async () => {
   await applyD1Migrations(env.DB, env.TEST_MIGRATIONS);
@@ -118,6 +119,22 @@ describe("one-use persistence", () => {
 });
 
 describe("relay access tokens", () => {
+  it("uses the redirect mode supported by the Cloudflare Workers runtime", async () => {
+    let redirect: RequestRedirect | undefined;
+    const fetcher = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      redirect = init?.redirect;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+
+    await requestEnvironmentMint(
+      new URL("https://clippy.saudecomalex.com/v1/connect/mint"),
+      "signed-proof",
+      fetcher,
+    );
+
+    expect(redirect).toBe("manual");
+  });
+
   it("includes scope and is bound to the DPoP thumbprint", async () => {
     const jkt = "client-jwk-thumbprint";
     const token = await issueRelayToken(env, { sub: "user-token", orgId: "org-token" }, jkt);

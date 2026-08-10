@@ -173,6 +173,45 @@ import Testing
     #expect(await store.view().sections.first?.name == "Newer")
 }
 
+@Test func desktopCompactUUIDsProjectIntoTheCanonicalMobileEntities() async throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let workspace = "workspace-compact-desktop-ids"
+    let actor = "47cde27b-9808-4f93-96ed-1d6f24535fa8"
+    let sectionCompact = "7dfd1243bc395d90f55e9a131c60acf4"
+    let itemCompact = "191aa407e685fc9f9f4e82e5f1092efd"
+    let operations = [
+        SyncOperation(
+            schemaVersion: 1,
+            workspaceId: workspace,
+            entityKind: "section",
+            entityId: sectionCompact,
+            dot: Dot(actorId: actor, counter: 1),
+            mutation: .setMetadata(field: "name", value: .string("Desktop list"))
+        ),
+        SyncOperation(
+            schemaVersion: 1,
+            workspaceId: workspace,
+            entityKind: "item",
+            entityId: itemCompact,
+            dot: Dot(actorId: actor, counter: 2),
+            mutation: .setMetadata(field: "sectionId", value: .string(sectionCompact))
+        ),
+    ]
+    let store = try LocalSyncStore(workspaceId: workspace, baseDirectory: directory)
+
+    _ = try await store.applyRemotePayload(SyncPayload(
+        workspaceId: workspace,
+        frontier: VersionVector([actor: 2]),
+        operations: operations
+    ))
+
+    let view = await store.view()
+    #expect(view.sections.first?.id == UUID(uuidString: "7dfd1243-bc39-5d90-f55e-9a131c60acf4"))
+    #expect(view.items.first?.id == UUID(uuidString: "191aa407-e685-fc9f-9f4e-82e5f1092efd"))
+    #expect(view.items.first?.sectionId == view.sections.first?.id)
+}
+
 @Test func replicaRejectsCausalGapsInsteadOfInventingObservedHistory() async throws {
     let directory = temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }

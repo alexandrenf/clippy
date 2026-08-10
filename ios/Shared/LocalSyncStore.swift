@@ -561,7 +561,7 @@ public actor LocalSyncStore {
         let attachmentIds = Set(
             snapshot.pendingOperations
                 .filter { $0.entityKind == "attachment" }
-                .compactMap { UUID(uuidString: $0.entityId) }
+                .compactMap { Self.entityUUID($0.entityId) }
         )
         return attachmentIds
             .compactMap { snapshot.attachments[$0]?.manifest }
@@ -716,7 +716,7 @@ public actor LocalSyncStore {
         try validate(operation: operation, workspaceId: state.workspaceId)
         let operationId = operationId(operation.dot)
         guard !state.appliedOperationIds.contains(operationId) else { return false }
-        guard let id = UUID(uuidString: operation.entityId) else {
+        guard let id = entityUUID(operation.entityId) else {
             throw LocalSyncStoreError.invalidEntityId
         }
 
@@ -826,7 +826,7 @@ public actor LocalSyncStore {
             section.sortIndex = index
             state.sections[id] = section
         case let ("item", "sectionId", .string(sectionId)):
-            guard let sectionId = UUID(uuidString: sectionId) else {
+            guard let sectionId = entityUUID(sectionId) else {
                 throw LocalSyncStoreError.invalidEntityId
             }
             var item = state.items[id] ?? LocalItem(
@@ -865,7 +865,7 @@ public actor LocalSyncStore {
             item.done = done
             state.items[id] = item
         case let ("attachment", "itemId", .string(itemId)):
-            guard let itemId = UUID(uuidString: itemId) else {
+            guard let itemId = entityUUID(itemId) else {
                 throw LocalSyncStoreError.invalidEntityId
             }
             var attachment = state.attachments[id] ?? placeholderAttachment(id: id)
@@ -947,12 +947,33 @@ public actor LocalSyncStore {
         guard ["section", "item", "attachment"].contains(operation.entityKind) else {
             throw LocalSyncStoreError.unsupportedEntity
         }
-        guard UUID(uuidString: operation.entityId) != nil,
+        guard entityUUID(operation.entityId) != nil,
               !operation.dot.actorId.isEmpty,
               operation.dot.actorId.utf8.count <= 512,
               operation.dot.counter > 0 else {
             throw LocalSyncStoreError.invalidOperation
         }
+    }
+
+    /// Desktop rows predate the sync protocol and use SQLite's compact
+    /// 32-hex UUID representation. New mobile operations use canonical UUID
+    /// strings. Accept both spellings at the compatibility boundary and use a
+    /// single UUID value internally so the same entity cannot fork by format.
+    private static func entityUUID(_ value: String) -> UUID? {
+        if let canonical = UUID(uuidString: value) { return canonical }
+        guard value.count == 32,
+              value.utf8.allSatisfy({ byte in
+                  (48...57).contains(byte) || (97...102).contains(byte) || (65...70).contains(byte)
+              }) else { return nil }
+        let characters = Array(value)
+        let hyphenated = [
+            String(characters[0..<8]),
+            String(characters[8..<12]),
+            String(characters[12..<16]),
+            String(characters[16..<20]),
+            String(characters[20..<32]),
+        ].joined(separator: "-")
+        return UUID(uuidString: hyphenated)
     }
 
     private static func placeholderAttachment(id: UUID) -> LocalAttachment {
