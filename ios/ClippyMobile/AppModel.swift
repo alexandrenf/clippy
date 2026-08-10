@@ -220,6 +220,31 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func addAttachment(itemId: UUID, name: String, mediaType: String, data: Data) {
+        Task {
+            do {
+                guard let store, let workspaceId else {
+                    throw LocalSyncStoreError.storageUnavailable
+                }
+                guard UInt64(data.count) <= LocalSyncStore.maxAttachmentBytes else {
+                    throw LocalSyncStoreError.invalidManifest
+                }
+                let key = try workspaceKey(workspaceId: workspaceId)
+                _ = try await store.addAttachment(
+                    itemId: itemId,
+                    name: name,
+                    mediaType: mediaType,
+                    data: data,
+                    key: key
+                )
+                await refreshLibrary()
+                wakeSync()
+            } catch {
+                message = "The attachment could not be imported."
+            }
+        }
+    }
+
     func deleteAttachment(id: UUID) {
         Task {
             do {

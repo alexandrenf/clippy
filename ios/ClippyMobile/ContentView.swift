@@ -1,5 +1,7 @@
+import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct ContentView: View {
     @ObservedObject var model: AppModel
@@ -14,6 +16,12 @@ struct ContentView: View {
     @State private var renamedSectionName = ""
     @State private var importingForItem: UUID?
     @State private var showsFileImporter = false
+    @State private var photoForItem: UUID?
+    @State private var selectedPhoto: PhotosPickerItem?
+    @State private var showsPhotoPicker = false
+    @State private var cameraForItem: UUID?
+    @State private var showsCamera = false
+    @State private var attachmentError: String?
 
     var body: some View {
         NavigationStack {
@@ -101,6 +109,60 @@ struct ContentView: View {
                   case let .success(urls) = result,
                   let url = urls.first else { return }
             model.addAttachment(itemId: itemId, url: url)
+        }
+        .photosPicker(
+            isPresented: $showsPhotoPicker,
+            selection: $selectedPhoto,
+            matching: .images,
+            photoLibrary: .shared()
+        )
+        .onChange(of: selectedPhoto) { _, photo in
+            guard let photo, let itemId = photoForItem else { return }
+            selectedPhoto = nil
+            photoForItem = nil
+
+            Task {
+                do {
+                    guard let data = try await photo.loadTransferable(type: Data.self) else {
+                        throw PhotoImportError.missingData
+                    }
+                    let type = photo.supportedContentTypes.first(where: { $0.conforms(to: .image) }) ?? .jpeg
+                    model.addAttachment(
+                        itemId: itemId,
+                        name: "Photo-\(Self.photoTimestamp.string(from: Date())).\(type.preferredFilenameExtension ?? "jpg")",
+                        mediaType: type.preferredMIMEType ?? "image/jpeg",
+                        data: data
+                    )
+                } catch {
+                    attachmentError = "That photo could not be imported."
+                }
+            }
+        }
+        .sheet(isPresented: $showsCamera, onDismiss: {
+            cameraForItem = nil
+        }) {
+            CameraCaptureView { data in
+                defer {
+                    showsCamera = false
+                    cameraForItem = nil
+                }
+                guard let data, let itemId = cameraForItem else { return }
+                model.addAttachment(
+                    itemId: itemId,
+                    name: "Photo-\(Self.photoTimestamp.string(from: Date())).jpg",
+                    mediaType: "image/jpeg",
+                    data: data
+                )
+            }
+            .ignoresSafeArea()
+        }
+        .alert("Attachment unavailable", isPresented: Binding(
+            get: { attachmentError != nil },
+            set: { if !$0 { attachmentError = nil } }
+        )) {
+            Button("OK", role: .cancel) { attachmentError = nil }
+        } message: {
+            Text(attachmentError ?? "Please try again.")
         }
     }
 
@@ -436,9 +498,23 @@ struct ContentView: View {
                         editingText = item.projectedContent
                         editingItem = item
                     }
-                    Button("Attach file", systemImage: "paperclip") {
-                        importingForItem = item.id
-                        showsFileImporter = true
+                    Menu("Add attachment", systemImage: "paperclip") {
+                        Button("Choose Photo", systemImage: "photo.on.rectangle") {
+                            photoForItem = item.id
+                            showsPhotoPicker = true
+                        }
+                        Button("Take Photo", systemImage: "camera") {
+                            guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+                                attachmentError = "The camera is not available on this device."
+                                return
+                            }
+                            cameraForItem = item.id
+                            showsCamera = true
+                        }
+                        Button("Choose File", systemImage: "folder") {
+                            importingForItem = item.id
+                            showsFileImporter = true
+                        }
                     }
                     Button("Delete", systemImage: "trash", role: .destructive) {
                         model.deleteItem(id: item.id)
@@ -485,7 +561,7 @@ struct ContentView: View {
 
             ForEach(model.library.attachments(for: item.id)) { attachment in
                 HStack(spacing: 8) {
-                    Image(systemName: "doc.fill")
+                    Image(systemName: attachment.mediaType.hasPrefix("image/") ? "photo.fill" : "doc.fill")
                         .foregroundStyle(ClippyPalette.accent)
                     Text(attachment.name)
                         .font(.system(size: 12.5, weight: .medium))
@@ -691,6 +767,13 @@ struct ContentView: View {
 
     private var statusTint: Color { statusAccent.opacity(0.13) }
     private var statusBackground: Color { ClippyPalette.surface }
+
+    private static let photoTimestamp: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter
+    }()
 }
 
 private enum ClippyPalette {
@@ -748,6 +831,49 @@ private extension Color {
                 alpha: 1
             )
         })
+    }
+}
+
+private enum PhotoImportError: Error {
+    case missingData
+}
+
+private struct CameraCaptureView: UIViewControllerRepresentable {
+    let onComplete: (Data?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onComplete: onComplete)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let controller = UIImagePickerController()
+        controller.sourceType = .camera
+        controller.cameraCaptureMode = .photo
+        controller.mediaTypes = [UTType.image.identifier]
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let onComplete: (Data?) -> Void
+
+        init(onComplete: @escaping (Data?) -> Void) {
+            self.onComplete = onComplete
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            onComplete(nil)
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            let image = info[.originalImage] as? UIImage
+            onComplete(image?.jpegData(compressionQuality: 0.92))
+        }
     }
 }
 

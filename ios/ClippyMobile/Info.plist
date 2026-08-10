@@ -33,6 +33,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Take photos to attach to your Clippy items.</string>
 	<key>RELAY_BASE_URL</key>
 	<string>$(RELAY_BASE_URL)</string>
 	<key>SYNC_ENDPOINT_HOST_SUFFIX</key>
