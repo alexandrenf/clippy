@@ -502,6 +502,14 @@ fn next_operation(
 }
 
 fn insert_operation(tx: &Transaction<'_>, operation: &Operation) -> Result<bool, StoreError> {
+    insert_operation_for_state(tx, operation, operation)
+}
+
+fn insert_operation_for_state(
+    tx: &Transaction<'_>,
+    operation: &Operation,
+    state_operation: &Operation,
+) -> Result<bool, StoreError> {
     let encoded = serde_json::to_string(operation)?;
     let inserted = tx.execute(
         "INSERT OR IGNORE INTO sync_operations(
@@ -542,9 +550,88 @@ fn insert_operation(tx: &Transaction<'_>, operation: &Operation) -> Result<bool,
                 operation.dot.counter
             ],
         )?;
-        update_entity_state(tx, operation)?;
+        update_entity_state(tx, state_operation)?;
     }
     Ok(inserted)
+}
+
+fn resolve_operation_identity(
+    tx: &Transaction<'_>,
+    operation: &Operation,
+) -> Result<Operation, StoreError> {
+    let mut resolved = operation.clone();
+    resolved.entity_id = resolve_entity_id(
+        tx,
+        &operation.workspace_id,
+        &operation.entity_kind,
+        &operation.entity_id,
+    )?;
+    match &mut resolved.mutation {
+        Mutation::SetMetadata { field, value }
+            if operation.entity_kind == EntityKind::Item && field == "sectionId" =>
+        {
+            if let Some(section_id) = value.as_str() {
+                *value = Value::String(resolve_entity_id(
+                    tx,
+                    &operation.workspace_id,
+                    &EntityKind::Section,
+                    section_id,
+                )?);
+            }
+        }
+        Mutation::SetMetadata { field, value }
+            if operation.entity_kind == EntityKind::Attachment && field == "itemId" =>
+        {
+            if let Some(item_id) = value.as_str() {
+                *value = Value::String(resolve_entity_id(
+                    tx,
+                    &operation.workspace_id,
+                    &EntityKind::Item,
+                    item_id,
+                )?);
+            }
+        }
+        _ => {}
+    }
+    Ok(resolved)
+}
+
+fn resolve_entity_id(
+    tx: &Transaction<'_>,
+    workspace_id: &str,
+    kind: &EntityKind,
+    raw: &str,
+) -> Result<String, StoreError> {
+    let uuid = Uuid::parse_str(raw).map_err(|_| StoreError::InvalidPayload)?;
+    let compact = uuid.simple().to_string();
+    let hyphenated = uuid.hyphenated().to_string();
+    let table = match kind {
+        EntityKind::Section => "sections",
+        EntityKind::Item => "items",
+        EntityKind::Attachment => "attachments",
+    };
+    let materialized = tx
+        .query_row(
+            &format!(
+                "SELECT sync_id FROM {table} WHERE sync_id=?1 OR sync_id=?2 ORDER BY id LIMIT 1"
+            ),
+            params![compact, hyphenated],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(existing) = materialized {
+        return Ok(existing);
+    }
+    let state = tx
+        .query_row(
+            "SELECT entity_id FROM sync_entities
+             WHERE workspace_id=?1 AND entity_kind=?2 AND (entity_id=?3 OR entity_id=?4)
+             ORDER BY rowid LIMIT 1",
+            params![workspace_id, kind_name(kind), compact, hyphenated],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    Ok(state.unwrap_or_else(|| raw.to_ascii_lowercase()))
 }
 
 fn update_entity_state(
@@ -620,8 +707,12 @@ pub fn exchange(
     let mut peer_frontier = incoming.frontier.clone();
     for operation in incoming.operations {
         peer_frontier.observe(&operation.dot);
-        if insert_operation(&tx, &operation)? {
-            changed.insert((operation.entity_kind.clone(), operation.entity_id.clone()));
+        let state_operation = resolve_operation_identity(&tx, &operation)?;
+        if insert_operation_for_state(&tx, &operation, &state_operation)? {
+            changed.insert((
+                state_operation.entity_kind.clone(),
+                state_operation.entity_id.clone(),
+            ));
         }
     }
     let mut changed: Vec<_> = changed.into_iter().collect();
@@ -1448,6 +1539,84 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM items", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn phone_uuid_spelling_updates_the_existing_desktop_item() {
+        let mut conn = db::init(Path::new(":memory:")).unwrap();
+        crate::sync::migrate(&conn).unwrap();
+        let workspace = Uuid::new_v4().to_string();
+        let local_actor = "11111111-1111-4111-8111-111111111111";
+        let peer_actor = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+        let item_uuid = Uuid::new_v4();
+        let compact_id = item_uuid.simple().to_string();
+        let hyphenated_id = item_uuid.hyphenated().to_string();
+        conn.execute(
+            "INSERT INTO items(content,done,created_at,updated_at,sync_id)
+             VALUES('settle me',0,1,1,?1)",
+            [&compact_id],
+        )
+        .unwrap();
+        scan_local(&mut conn, &workspace, local_actor).unwrap();
+
+        exchange(
+            &mut conn,
+            &workspace,
+            peer_actor,
+            SyncPayload {
+                schema_version: SYNC_SCHEMA_VERSION,
+                workspace_id: workspace.clone(),
+                frontier: VersionVector(BTreeMap::from([(peer_actor.into(), 2)])),
+                operations: vec![
+                    Operation {
+                        schema_version: SYNC_SCHEMA_VERSION,
+                        workspace_id: workspace.clone(),
+                        entity_kind: EntityKind::Item,
+                        entity_id: hyphenated_id.clone(),
+                        dot: Dot {
+                            actor_id: peer_actor.into(),
+                            counter: 1,
+                        },
+                        mutation: Mutation::SetMetadata {
+                            field: "sectionId".into(),
+                            value: Value::Null,
+                        },
+                    },
+                    Operation {
+                        schema_version: SYNC_SCHEMA_VERSION,
+                        workspace_id: workspace.clone(),
+                        entity_kind: EntityKind::Item,
+                        entity_id: hyphenated_id.clone(),
+                        dot: Dot {
+                            actor_id: peer_actor.into(),
+                            counter: 2,
+                        },
+                        mutation: Mutation::SetMetadata {
+                            field: "done".into(),
+                            value: Value::Bool(true),
+                        },
+                    },
+                ],
+            },
+        )
+        .unwrap();
+
+        let done: i64 = conn
+            .query_row(
+                "SELECT done FROM items WHERE sync_id=?1",
+                [&compact_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let duplicate_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM items WHERE sync_id=?1",
+                [&hyphenated_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(done, 1);
+        assert_eq!(duplicate_count, 0);
     }
 
     #[test]

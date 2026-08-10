@@ -1,0 +1,11 @@
+Clippy
+
+Clippy began as a derivative of Cooper by TouchMyBar and Cooper contributors:
+https://github.com/TouchMyBar/cooper
+
+The inherited Cooper source and subsequent Clippy modifications are provided
+under the Apache License, Version 2.0. The repository retains the original Git
+history so authorship and provenance remain available at commit level.
+
+Clippy is an independent project and is not affiliated with or endorsed by
+TouchMyBar, Cooper's maintainers, shadcn, Copper, or Microsoft.

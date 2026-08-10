@@ -9,13 +9,13 @@
 links, notes, and follow-up prompts without leaving your current app. It keeps
 the useful parts of a to-do list, clipboard, and scratchpad one shortcut away.
 
-> **Fork and credits:** Clippy is a fork of
-> [Cooper by TouchMyBar](https://github.com/TouchMyBar/cooper), an open-source
-> recreation inspired by shadcn's Copper app. Full credit goes to the Cooper
-> maintainers and contributors for the cross-platform foundation. This fork
-> keeps that workflow, adds macOS reliability and visual polish, and renames
-> the app to suit my preference. Clippy is not affiliated with Cooper's
-> maintainers, shadcn, Copper, or Microsoft.
+> **Origin and attribution:** Clippy began from
+> [Cooper by TouchMyBar](https://github.com/TouchMyBar/cooper), an Apache-2.0
+> open-source recreation inspired by shadcn's Copper app. Clippy preserves the
+> original commit history, license, and contributor credit while developing as
+> an independent product with its own macOS, iPhone, encrypted sync, and agent
+> integrations. Clippy is not affiliated with Cooper's maintainers, shadcn,
+> Copper, or Microsoft.
 
 **Local-first and private.** Everything lives in a SQLite file on your Mac.
 Telemetry is off, and an account is needed only when you enable the optional
@@ -119,8 +119,10 @@ Electron.
   location when possible, leaving the original untouched.
 - `⋯ → Export to Markdown` writes `clippy-export.md` to Documents.
 
-## License and upstream
+## License and origin
 
-[Apache-2.0](LICENSE). Clippy preserves Cooper's license and contributor
-credit. For the original project, its history, and upstream releases, visit
-[TouchMyBar/cooper](https://github.com/TouchMyBar/cooper).
+[Apache-2.0](LICENSE). See [NOTICE](NOTICE) for the original project attribution.
+Cooper's original source, history, and releases remain available at
+[TouchMyBar/cooper](https://github.com/TouchMyBar/cooper). Clippy retains its
+own full Git history so the provenance of inherited and later work stays
+auditable.
