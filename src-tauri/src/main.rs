@@ -173,8 +173,13 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Clippy");
+        .build(tauri::generate_context!())
+        .expect("error while building Clippy")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                sync::shutdown(app);
+            }
+        });
 }
 
 #[cfg(test)]

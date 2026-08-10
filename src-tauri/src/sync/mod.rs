@@ -103,6 +103,18 @@ pub fn initialize(app: &AppHandle, db_path: PathBuf, data_dir: PathBuf) {
     });
 }
 
+/// Releases the owned connector before the desktop process exits. Tauri's
+/// application state is not guaranteed to run Rust destructors during its
+/// final event-loop teardown, so normal quits must stop the child explicitly.
+pub fn shutdown(app: &AppHandle) {
+    let Some(runtime) = app.try_state::<SyncRuntime>() else {
+        return;
+    };
+    if let Ok(mut active) = runtime.active.lock() {
+        active.take();
+    };
+}
+
 #[tauri::command]
 pub async fn sign_in_sync(
     app: AppHandle,
