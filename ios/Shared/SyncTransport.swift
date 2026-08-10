@@ -30,11 +30,11 @@ public actor SyncTransport {
     public var leaseExpiresAt: Date { environment.expiresAt }
     public var environmentId: String { environment.environmentId }
 
-    public func pair(response: PairingResponse) async throws -> PairingGrant {
-        var request = try authenticatedRequest(path: "v1/sync/pair", method: "POST")
-        request.httpBody = try JSONEncoder().encode(response)
+    public func enroll(request enrollment: AccountEnrollmentRequest) async throws -> AccountEnrollmentResponse {
+        var request = try authenticatedRequest(path: "v1/sync/enroll", method: "POST")
+        request.httpBody = try JSONEncoder().encode(enrollment)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        return try await send(request, as: PairingGrant.self)
+        return try await send(request, as: AccountEnrollmentResponse.self)
     }
 
     public func exchange(

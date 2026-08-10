@@ -12,10 +12,8 @@ pub mod status;
 pub mod store;
 pub mod tunnel;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
 use config::{Environment, SyncConfig};
-use crypto::{PendingPairing, WorkspaceKey};
+use crypto::WorkspaceKey;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -27,7 +25,6 @@ use uuid::Uuid;
 
 const KEYCHAIN_SERVICE: &str = "app.clippy.desktop.sync";
 const AUTH_KEYCHAIN_SERVICE: &str = "app.clippy.desktop.auth.v2";
-const PAIRING_TTL_MS: u64 = 5 * 60 * 1_000;
 
 pub struct SyncRuntime {
     db_path: PathBuf,
@@ -40,14 +37,6 @@ struct ActiveSync {
     config: SyncConfig,
     origin: Arc<origin::OriginState>,
     _tunnel: Arc<Mutex<tunnel::TunnelRunner>>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PairingStart {
-    environment: &'static str,
-    payload: String,
-    expires_at_ms: u64,
 }
 
 #[derive(Serialize)]
@@ -115,51 +104,8 @@ pub fn initialize(app: &AppHandle, db_path: PathBuf, data_dir: PathBuf) {
 }
 
 #[tauri::command]
-pub async fn begin_sync_pairing(
-    app: AppHandle,
-    runtime: State<'_, SyncRuntime>,
-    environment: Option<String>,
-) -> Result<PairingStart, String> {
-    let environment = environment
-        .as_deref()
-        .map(Environment::parse)
-        .transpose()
-        .map_err(|_| "Choose staging or production".to_string())?
-        .unwrap_or(Environment::Production);
-    let (config, origin) = activate(&app, &runtime, environment, true).await?;
-    let pending = PendingPairing::new(
-        config.workspace_id.clone(),
-        config.endpoint.http_base_url.clone(),
-        config
-            .workos_issuer
-            .as_str()
-            .trim_end_matches('/')
-            .to_string(),
-        config.workos_audience.clone(),
-        origin.key.clone(),
-        origin.owner.clone(),
-        PAIRING_TTL_MS,
-    );
-    let offer = pending.offer.clone();
-    *origin
-        .pending_pairing
-        .lock()
-        .map_err(|_| "Sync pairing is busy".to_string())? = Some(pending);
-    let encoded = serde_json::to_vec(&offer).map_err(|_| "Could not encode pairing offer")?;
-    status::set(
-        &app,
-        &app.state::<status::SyncStatus>(),
-        status::SyncState::WaitingForDevice,
-    );
-    Ok(PairingStart {
-        environment: environment.as_str(),
-        payload: URL_SAFE_NO_PAD.encode(encoded),
-        expires_at_ms: offer.expires_at_ms,
-    })
-}
-
-#[tauri::command]
 pub async fn sign_in_sync(
+    app: AppHandle,
     runtime: State<'_, SyncRuntime>,
     environment: Option<String>,
 ) -> Result<SyncSignIn, String> {
@@ -179,6 +125,7 @@ pub async fn sign_in_sync(
     }
     auth_login::sign_in(environment).await?;
     let endpoint = link::link(environment, &runtime.db_path, "Clippy on this Mac").await?;
+    activate(&app, &runtime, environment, true).await?;
     Ok(SyncSignIn {
         environment: environment.as_str(),
         endpoint,
@@ -327,6 +274,13 @@ async fn activate(
         chunks_dir,
         runtime.data_dir.join("attachments"),
         key,
+        config.endpoint.http_base_url.clone(),
+        config
+            .workos_issuer
+            .as_str()
+            .trim_end_matches('/')
+            .to_string(),
+        config.workos_audience.clone(),
         owner,
         verifier,
         direct,

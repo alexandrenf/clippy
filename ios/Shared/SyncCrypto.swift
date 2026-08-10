@@ -12,15 +12,19 @@ public struct PairingOffer: Codable, Equatable, Sendable {
     public let expiresAtMs: UInt64
 }
 
-public struct PairingResponse: Codable, Equatable, Sendable {
-    public let phonePublicKey: String
-    public let oneTimeToken: String
-}
-
 public struct PairingGrant: Codable, Equatable, Sendable {
     public let macPublicKey: String
     public let phonePublicKey: String
     public let sealedWorkspace: SealedEnvelope
+}
+
+public struct AccountEnrollmentRequest: Codable, Equatable, Sendable {
+    public let phonePublicKey: String
+}
+
+public struct AccountEnrollmentResponse: Codable, Equatable, Sendable {
+    public let offer: PairingOffer
+    public let grant: PairingGrant
 }
 
 public struct AuthenticatedPrincipal: Equatable, Sendable {
@@ -55,51 +59,32 @@ public struct SealedEnvelope: Codable, Equatable, Sendable {
 }
 
 public enum SyncCrypto {
-    public struct PhonePairing: Sendable {
-        public let response: PairingResponse
-        fileprivate let privateKey: Curve25519.KeyAgreement.PrivateKey
+    /// Device-side enrollment for an already authenticated account. The private
+    /// key never leaves this device; the Mac wraps the workspace key to its
+    /// public counterpart after verifying the WorkOS/DPoP session.
+    public struct AccountEnrollment: Sendable {
+        public let request: AccountEnrollmentRequest
+        private let privateKey: Curve25519.KeyAgreement.PrivateKey
 
-        public init(offer: PairingOffer) {
+        public init() {
             let privateKey = Curve25519.KeyAgreement.PrivateKey()
             self.privateKey = privateKey
-            response = PairingResponse(
-                phonePublicKey: privateKey.publicKey.rawRepresentation.base64URLEncodedString(),
-                oneTimeToken: offer.oneTimeToken
+            request = AccountEnrollmentRequest(
+                phonePublicKey: privateKey.publicKey.rawRepresentation.base64URLEncodedString()
             )
         }
 
         public func unwrap(
-            grant: PairingGrant,
-            offer: PairingOffer,
+            response: AccountEnrollmentResponse,
             principal: AuthenticatedPrincipal
         ) throws -> WorkspaceKey {
-            guard grant.macPublicKey == offer.macPublicKey,
-                  grant.phonePublicKey == response.phonePublicKey else {
-                throw SyncCryptoError.authenticationFailed
-            }
-            let macKey = try Curve25519.KeyAgreement.PublicKey(
-                rawRepresentation: Data(base64URLEncoded: grant.macPublicKey)
-            )
-            let shared = try privateKey.sharedSecretFromKeyAgreement(with: macKey)
-            let wrapKey = shared.hkdfDerivedSymmetricKey(
-                using: SHA256.self,
-                salt: Data(offer.oneTimeToken.utf8),
-                sharedInfo: Data("clippy-sync-pairing-wrap-key-v1:\(offer.workspaceId)".utf8),
-                outputByteCount: 32
-            )
-            let aad = pairingAAD(
-                offer: offer,
-                phonePublicKey: grant.phonePublicKey,
+            try unwrapWorkspace(
+                privateKey: privateKey,
+                phonePublicKey: request.phonePublicKey,
+                grant: response.grant,
+                offer: response.offer,
                 principal: principal
             )
-            let plaintext = try open(envelope: grant.sealedWorkspace, key: wrapKey, aad: aad)
-            let payload = try JSONDecoder().decode(PairingGrantPayload.self, from: plaintext)
-            guard payload.workspaceId == offer.workspaceId,
-                  payload.authorizedSubject == principal.subject,
-                  payload.organizationId == principal.organizationId else {
-                throw SyncCryptoError.principalMismatch
-            }
-            return try WorkspaceKey(base64URL: payload.workspaceKey)
         }
     }
 
@@ -168,6 +153,42 @@ public enum SyncCrypto {
             result.append(bytes)
         }
         return result
+    }
+
+    private static func unwrapWorkspace(
+        privateKey: Curve25519.KeyAgreement.PrivateKey,
+        phonePublicKey: String,
+        grant: PairingGrant,
+        offer: PairingOffer,
+        principal: AuthenticatedPrincipal
+    ) throws -> WorkspaceKey {
+        guard grant.macPublicKey == offer.macPublicKey,
+              grant.phonePublicKey == phonePublicKey else {
+            throw SyncCryptoError.authenticationFailed
+        }
+        let macKey = try Curve25519.KeyAgreement.PublicKey(
+            rawRepresentation: Data(base64URLEncoded: grant.macPublicKey)
+        )
+        let shared = try privateKey.sharedSecretFromKeyAgreement(with: macKey)
+        let wrapKey = shared.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(offer.oneTimeToken.utf8),
+            sharedInfo: Data("clippy-sync-pairing-wrap-key-v1:\(offer.workspaceId)".utf8),
+            outputByteCount: 32
+        )
+        let aad = pairingAAD(
+            offer: offer,
+            phonePublicKey: grant.phonePublicKey,
+            principal: principal
+        )
+        let plaintext = try open(envelope: grant.sealedWorkspace, key: wrapKey, aad: aad)
+        let payload = try JSONDecoder().decode(PairingGrantPayload.self, from: plaintext)
+        guard payload.workspaceId == offer.workspaceId,
+              payload.authorizedSubject == principal.subject,
+              payload.organizationId == principal.organizationId else {
+            throw SyncCryptoError.principalMismatch
+        }
+        return try WorkspaceKey(base64URL: payload.workspaceKey)
     }
 
     private static func syncAAD(fields: [String]) -> Data {

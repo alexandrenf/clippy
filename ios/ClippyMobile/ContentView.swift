@@ -26,8 +26,8 @@ struct ContentView: View {
 
                         if !auth.signedIn {
                             signedOutCard
-                        } else if model.library.actorId.isEmpty || model.needsRelayPairing {
-                            pairingCard
+                        } else if model.library.actorId.isEmpty {
+                            accountConnectionCard
                         } else {
                             librarySections
                         }
@@ -181,7 +181,7 @@ struct ContentView: View {
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .tracking(-0.35)
                         .foregroundStyle(ClippyPalette.text)
-                    Text("Sign in to bring your Mac lists and files to this iPhone. You’ll pair the devices once after login.")
+                    Text("Sign in with the same account as your Mac. Your lists and files connect automatically—no pairing code needed.")
                         .font(.system(size: 15, weight: .regular))
                         .foregroundStyle(ClippyPalette.muted)
                         .lineSpacing(3)
@@ -217,48 +217,29 @@ struct ContentView: View {
         }
     }
 
-    private var pairingCard: some View {
+    private var accountConnectionCard: some View {
         card {
             VStack(alignment: .leading, spacing: 17) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(model.needsRelayPairing ? "Reconnect your Mac" : "Pair your Mac")
+                    Text("Connecting your account")
                         .font(.system(size: 22, weight: .bold, design: .rounded))
                         .tracking(-0.35)
                         .foregroundStyle(ClippyPalette.text)
-                    Text(model.needsRelayPairing
-                         ? "Pair once to move this workspace to the secure relay. Your offline data stays on this iPhone."
-                         : "Open Clippy on your Mac, copy the iPhone pairing code, and paste it here.")
+                    Text("Clippy is securely finding your Mac and bringing over your lists. Keep Clippy open on the Mac for a moment.")
                         .font(.system(size: 15))
                         .foregroundStyle(ClippyPalette.muted)
                         .lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                TextField("Paste pairing code", text: $model.pairingCode, axis: .vertical)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .lineLimit(2...5)
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 12)
-                    .background(ClippyPalette.field, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 13, style: .continuous)
-                            .stroke(ClippyPalette.hairline, lineWidth: 1)
-                    }
-
-                Button {
-                    model.pair()
-                } label: {
-                    HStack(spacing: 9) {
-                        Image(systemName: "macbook.and.iphone")
-                        Text("Pair iPhone")
-                        Spacer()
-                        Image(systemName: "arrow.right")
-                    }
+                HStack(spacing: 11) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(ClippyPalette.accent)
+                    Text(model.connectingAccount ? "Looking for your Mac…" : "Waiting for your Mac…")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(ClippyPalette.muted)
                 }
-                .buttonStyle(ClippyPrimaryButtonStyle())
-                .disabled(model.pairingCode.isEmpty || model.syncState == .syncing)
             }
         }
     }
@@ -587,7 +568,7 @@ struct ContentView: View {
             return "Ready to sync"
         }
         switch model.syncState {
-        case .idle: return auth.signedIn ? "Finish setup" : "Ready when you are"
+        case .idle: return auth.signedIn ? "Connecting your account" : "Ready when you are"
         case .syncing: return "Syncing now"
         case .synced: return "Everything is synced"
         case .waitingForDevice: return "Waiting for your Mac"
@@ -601,7 +582,7 @@ struct ContentView: View {
         }
         switch model.syncState {
         case .idle:
-            return auth.signedIn ? "Pair your Mac to start syncing." : "Sign in to connect this iPhone."
+            return auth.signedIn ? "Your Mac will connect automatically." : "Sign in to connect this iPhone."
         case .syncing: return "Updating your lists and files…"
         case .synced: return "Your iPhone and Mac are up to date."
         case .waitingForDevice: return "We’ll sync as soon as it’s available."

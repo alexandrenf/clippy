@@ -83,10 +83,7 @@ export default function SettingsSheet({
   const [syncEnvironment, setSyncEnvironment] = useState<"staging" | "production">("production");
   const [syncConnected, setSyncConnected] = useState(false);
   const [signInBusy, setSignInBusy] = useState(false);
-  const [pairing, setPairing] = useState<{ payload: string; expiresAtMs: number } | null>(null);
-  const [pairingBusy, setPairingBusy] = useState(false);
   const [pairingError, setPairingError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
   const [agentEnabled, setAgentEnabled] = useState(false);
   const [agentBusy, setAgentBusy] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
@@ -173,7 +170,6 @@ export default function SettingsSheet({
             value={syncEnvironment}
             onChange={(event) => {
               setSyncEnvironment(event.target.value as "staging" | "production");
-              setPairing(null);
               setPairingError(null);
               setSyncConnected(false);
             }}
@@ -183,8 +179,8 @@ export default function SettingsSheet({
           </select>
         </label>
         <p className="settings-hint">
-          Sign in in your browser, then pair the iPhone companion with an end-to-end encrypted workspace.
-          The browser redirects back to Clippy automatically; there is no code to copy.
+          Sign in once. Every device using the same Clippy account connects automatically,
+          while workspace contents remain end-to-end encrypted.
         </p>
         <div className="settings-actions">
           <button
@@ -201,41 +197,8 @@ export default function SettingsSheet({
           >
             {signInBusy ? "Connecting…" : syncConnected ? "Signed in" : "Sign in"}
           </button>
-          <button
-            className="settings-reset"
-            disabled={pairingBusy || signInBusy || !syncConnected}
-            onClick={() => {
-              setPairingBusy(true);
-              setPairingError(null);
-              setCopied(false);
-              void api.beginSyncPairing(syncEnvironment)
-                .then((result) => setPairing(result))
-                .catch((cause) => setPairingError(cause instanceof Error ? cause.message : String(cause)))
-                .finally(() => setPairingBusy(false));
-            }}
-          >
-            {pairingBusy ? "Preparing…" : "Pair iPhone"}
-          </button>
-          {pairing && (
-            <button
-              className="settings-save"
-              onClick={() => {
-                void api.copyText(pairing.payload).then(() => setCopied(true));
-              }}
-            >
-              {copied ? "Copied" : "Copy offer"}
-            </button>
-          )}
+          {syncConnected && <span className="settings-hint">Account sync is ready</span>}
         </div>
-        {pairing && (
-          <input
-            className="shortcut-recorder"
-            readOnly
-            aria-label="Encrypted iPhone pairing offer"
-            value={pairing.payload}
-            onFocus={(event) => event.currentTarget.select()}
-          />
-        )}
         {pairingError && <div className="settings-error" role="alert">{pairingError}</div>}
         <div className="settings-subtitle">Agent access</div>
         <p className="settings-hint">

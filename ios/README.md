@@ -30,8 +30,9 @@ issues a DPoP-bound relay token and then a one-use environment bootstrap. Sync
 HTTP calls use the environment DPoP token; WebSockets use only a short one-use
 query ticket, never a long-lived token in the URL or upgrade headers.
 
-The existing X25519 pairing grant and ChaCha20-Poly1305 CRDT/chunk encryption
-remain above that session layer. Pairing occurs after environment bootstrap, so
+The existing X25519 key grant and ChaCha20-Poly1305 CRDT/chunk encryption
+remain above that session layer. A device signed into the same account is
+enrolled automatically after environment bootstrap, so
 WorkOS and the relay never derive the workspace encryption key.
 
 The companion includes a durable local item/op/chunk replica, explicit

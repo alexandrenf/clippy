@@ -83,7 +83,6 @@ fn main() {
             commands::install_agent_companion,
             sync::sign_in_sync,
             sync::sync_auth_status,
-            sync::begin_sync_pairing,
             sync::sync_status,
         ])
         .setup(|app| {

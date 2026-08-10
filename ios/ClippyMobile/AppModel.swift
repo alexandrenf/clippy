@@ -8,8 +8,7 @@ import UIKit
 final class AppModel: ObservableObject {
     @Published private(set) var syncState: SyncState = .idle
     @Published private(set) var library: LocalSyncView = .empty
-    @Published private(set) var needsRelayPairing = false
-    @Published var pairingCode = ""
+    @Published private(set) var connectingAccount = false
     @Published var message: String?
 
     let auth: AuthController
@@ -25,6 +24,7 @@ final class AppModel: ObservableObject {
     private var transport: SyncTransport?
     private var connectionTask: Task<SyncTransport, Error>?
     private var transientSyncRetryTask: Task<Void, Never>?
+    private var accountEnrollmentTask: Task<Void, Never>?
     private var supervisor = ConnectionSupervisor()
     private var safetyPollTask: Task<Void, Never>?
     private var eventLoopTask: Task<Void, Never>?
@@ -53,7 +53,6 @@ final class AppModel: ObservableObject {
            let workspace = String(data: data, encoding: .utf8),
            !workspace.isEmpty {
             workspaceId = workspace
-            needsRelayPairing = environmentId == nil
             syncState = .waitingForDevice
             Task { [weak self] in await self?.openReplica(workspaceId: workspace) }
         }
@@ -81,70 +80,8 @@ final class AppModel: ObservableObject {
         eventSocket?.cancel(with: .goingAway, reason: nil)
         connectionTask?.cancel()
         transientSyncRetryTask?.cancel()
+        accountEnrollmentTask?.cancel()
         pathMonitor.cancel()
-    }
-
-    func pair() {
-        Task {
-            do {
-                syncState = .syncing
-                let offer = try Self.decodeOffer(pairingCode)
-                guard offer.workosIssuer == configuration.workOSIssuer.absoluteString,
-                      offer.workosAudience == configuration.workOSClientID else {
-                    throw PairingError.environmentMismatch
-                }
-                guard UInt64(Date().timeIntervalSince1970 * 1_000) <= offer.expiresAtMs else {
-                    throw PairingError.expired
-                }
-                let phone = SyncCrypto.PhonePairing(offer: offer)
-                let accessToken = try await auth.accessToken()
-                let relay = try relay()
-                let environments = try await relay.environments(workOSAccessToken: accessToken)
-                let selected = try Self.selectEnvironment(
-                    for: offer.workspaceId,
-                    from: environments
-                )
-                let connection = try await relay.connect(
-                    environmentId: selected.id,
-                    workOSAccessToken: accessToken
-                )
-                let session = try await relay.bootstrap(connection)
-                let transport = try SyncTransport(
-                    environment: session,
-                    signer: try signer()
-                )
-                let grant = try await transport.pair(response: phone.response)
-                let key = try phone.unwrap(
-                    grant: grant,
-                    offer: offer,
-                    principal: try await auth.principal()
-                )
-                try keychain.save(
-                    key.data,
-                    account: configuration.keychainAccount("workspace-key:\(offer.workspaceId)")
-                )
-                try keychain.save(
-                    Data(offer.workspaceId.utf8),
-                    account: configuration.keychainAccount("workspace-id")
-                )
-                try persist(environment: session)
-                workspaceId = offer.workspaceId
-                environmentId = selected.id
-                needsRelayPairing = false
-                environmentSession = session
-                environmentConnectedAt = Date()
-                self.transport = transport
-                supervisor.connected(leaseExpiresAt: session.expiresAt, at: Date())
-                pairingCode = ""
-                try await installReplica(workspaceId: offer.workspaceId)
-                syncState = .synced
-                message = "This iPhone is paired."
-                startForegroundNetworking()
-            } catch {
-                syncState = .waitingForDevice
-                message = "Pairing could not be verified."
-            }
-        }
     }
 
     func createSection(name: String) {
@@ -379,8 +316,11 @@ final class AppModel: ObservableObject {
     }
 
     private func startForegroundNetworking() {
-        guard isForeground, isOnline, store != nil, workspaceId != nil,
-              environmentId != nil, auth.signedIn else { return }
+        guard isForeground, isOnline, auth.signedIn else { return }
+        guard store != nil, workspaceId != nil, environmentId != nil else {
+            beginAutomaticAccountEnrollment()
+            return
+        }
         wakeSync()
         if safetyPollTask == nil {
             safetyPollTask = Task { [weak self] in
@@ -415,6 +355,9 @@ final class AppModel: ObservableObject {
         connectionTask = nil
         transientSyncRetryTask?.cancel()
         transientSyncRetryTask = nil
+        accountEnrollmentTask?.cancel()
+        accountEnrollmentTask = nil
+        connectingAccount = false
         eventSocket?.cancel(with: .goingAway, reason: nil)
         eventSocket = nil
     }
@@ -729,30 +672,101 @@ final class AppModel: ObservableObject {
         return try WorkspaceKey(data: data)
     }
 
-    private static func decodeOffer(_ value: String) throws -> PairingOffer {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let data: Data
-        if trimmed.first == "{" { data = Data(trimmed.utf8) }
-        else { data = try Data(base64URLEncoded: trimmed) }
-        return try JSONDecoder().decode(PairingOffer.self, from: data)
+    private func beginAutomaticAccountEnrollment() {
+        guard accountEnrollmentTask == nil else { return }
+        connectingAccount = true
+        accountEnrollmentTask = Task { [weak self] in
+            guard let self else { return }
+            var retryDelay: TimeInterval = 0
+            while !Task.isCancelled, self.isForeground, self.isOnline, self.auth.signedIn,
+                  (self.workspaceId == nil || self.environmentId == nil || self.store == nil) {
+                if retryDelay > 0 {
+                    do { try await Task.sleep(for: .seconds(retryDelay)) }
+                    catch { break }
+                }
+                do {
+                    try await self.enrollSignedInAccount()
+                    break
+                } catch AccountEnrollmentError.noEnvironment {
+                    self.syncState = .waitingForDevice
+                    self.message = "Open Clippy on your Mac and sign in there. This iPhone will connect automatically."
+                } catch {
+                    if self.shouldBlockForCredentialOrConfiguration(error) { break }
+                    self.syncState = .waitingForDevice
+                    self.message = "Waiting for your Mac to come online."
+                }
+                retryDelay = retryDelay == 0 ? 1 : min(retryDelay * 2, 30)
+            }
+            self.connectingAccount = false
+            self.accountEnrollmentTask = nil
+        }
+    }
+
+    private func enrollSignedInAccount() async throws {
+        syncState = .syncing
+        let accessToken = try await auth.accessToken()
+        let relay = try relay()
+        let environments = try await relay.environments(workOSAccessToken: accessToken)
+        guard let selected = Self.selectEnvironment(
+            preferredId: environmentId,
+            from: environments
+        ) else { throw AccountEnrollmentError.noEnvironment }
+        let connection = try await relay.connect(
+            environmentId: selected.id,
+            workOSAccessToken: accessToken
+        )
+        let session = try await relay.bootstrap(connection)
+        let transport = try SyncTransport(environment: session, signer: try signer())
+        let enrollment = SyncCrypto.AccountEnrollment()
+        let response = try await transport.enroll(request: enrollment.request)
+        let offer = response.offer
+        let expectedWorkspace = selected.workspaceId ?? selected.id
+        guard offer.workspaceId == expectedWorkspace,
+              offer.workosIssuer == configuration.workOSIssuer.absoluteString,
+              offer.workosAudience == configuration.workOSClientID,
+              offer.tunnelUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
+                session.endpoint.httpBaseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+              UInt64(Date().timeIntervalSince1970 * 1_000) <= offer.expiresAtMs else {
+            throw AccountEnrollmentError.invalidResponse
+        }
+        let key = try enrollment.unwrap(
+            response: response,
+            principal: try await auth.principal()
+        )
+        try keychain.save(
+            key.data,
+            account: configuration.keychainAccount("workspace-key:\(offer.workspaceId)")
+        )
+        try keychain.save(
+            Data(offer.workspaceId.utf8),
+            account: configuration.keychainAccount("workspace-id")
+        )
+        try persist(environment: session)
+        workspaceId = offer.workspaceId
+        environmentId = selected.id
+        environmentSession = session
+        environmentConnectedAt = Date()
+        self.transport = transport
+        supervisor.connected(leaseExpiresAt: session.expiresAt, at: Date())
+        try await installReplica(workspaceId: offer.workspaceId)
+        syncState = .synced
+        message = nil
+        startForegroundNetworking()
     }
 
     private static func selectEnvironment(
-        for workspaceId: String,
+        preferredId: String?,
         from environments: [RelayEnvironment]
-    ) throws -> RelayEnvironment {
-        let matching = environments.filter {
-            $0.workspaceId == workspaceId || $0.id == workspaceId
+    ) -> RelayEnvironment? {
+        if let preferredId,
+           let preferred = environments.first(where: { $0.id == preferredId }) {
+            return preferred
         }
-        if matching.count == 1 { return matching[0] }
-        guard matching.isEmpty, environments.count == 1, let only = environments.first else {
-            throw PairingError.environmentMismatch
-        }
-        return only
+        return environments.first
     }
 }
 
-enum PairingError: Error { case environmentMismatch, expired }
+private enum AccountEnrollmentError: Error { case noEnvironment, invalidResponse }
 private enum AppConnectionError: Error { case authentication, missingEnvironment }
 
 extension Notification.Name {

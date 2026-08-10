@@ -33,6 +33,7 @@ use uuid::Uuid;
 const MAX_ENVELOPE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_HTTP_BODY_BYTES: usize = 12 * 1024 * 1024;
 const MAX_MISSING_HASHES: usize = 1_024;
+const ACCOUNT_ENROLLMENT_TTL_MS: u64 = 60_000;
 
 pub struct OriginState {
     pub workspace_id: String,
@@ -40,11 +41,13 @@ pub struct OriginState {
     pub chunks_dir: PathBuf,
     pub attachments_dir: PathBuf,
     pub key: crypto::WorkspaceKey,
+    pub tunnel_url: String,
+    pub workos_issuer: String,
+    pub workos_audience: String,
     pub owner: AuthenticatedPrincipal,
     pub verifier: Option<WorkOsVerifier>,
     pub direct: Option<DirectSessionOrigin>,
     pub legacy_bearer_migration: bool,
-    pub pending_pairing: Mutex<Option<PendingPairing>>,
     pub events: broadcast::Sender<()>,
     connected_peers: AtomicUsize,
     app: AppHandle,
@@ -71,6 +74,9 @@ impl OriginState {
         chunks_dir: PathBuf,
         attachments_dir: PathBuf,
         key: crypto::WorkspaceKey,
+        tunnel_url: String,
+        workos_issuer: String,
+        workos_audience: String,
         owner: AuthenticatedPrincipal,
         verifier: Option<WorkOsVerifier>,
         direct: Option<DirectSessionOrigin>,
@@ -84,11 +90,13 @@ impl OriginState {
             chunks_dir,
             attachments_dir,
             key,
+            tunnel_url,
+            workos_issuer,
+            workos_audience,
             owner,
             verifier,
             direct,
             legacy_bearer_migration,
-            pending_pairing: Mutex::new(None),
             events,
             connected_peers: AtomicUsize::new(0),
             app,
@@ -218,7 +226,7 @@ pub async fn serve_listener(
             "/v1/connect/websocket-ticket",
             post(connect_websocket_ticket),
         )
-        .route("/v1/sync/pair", post(pair))
+        .route("/v1/sync/enroll", post(enroll_account_device))
         .route("/v1/sync/exchange", post(exchange))
         .route("/v1/sync/events", get(events))
         .route("/v1/sync/chunks/missing", post(missing_chunks))
@@ -310,31 +318,50 @@ async fn connect_websocket_ticket(
     Ok(Json(response))
 }
 
-async fn pair(
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AccountEnrollmentRequest {
+    phone_public_key: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountEnrollmentResponse {
+    offer: crypto::PairingOffer,
+    grant: PairingGrant,
+}
+
+/// Enrolls a device that already proved ownership of the same WorkOS account.
+/// The relay bootstrap is DPoP-bound to the device, so no copied pairing secret
+/// is needed. A fresh ephemeral X25519 key still wraps the workspace key E2EE.
+async fn enroll_account_device(
     State(state): State<Arc<OriginState>>,
     headers: HeaderMap,
     ConnectInfo(address): ConnectInfo<SocketAddr>,
-    Json(response): Json<PairingResponse>,
-) -> Result<Json<PairingGrant>, ApiError> {
+    Json(request): Json<AccountEnrollmentRequest>,
+) -> Result<Json<AccountEnrollmentResponse>, ApiError> {
     let principal = state
-        .authorize_http(&headers, address, &Method::POST, "/v1/sync/pair")
+        .authorize_http(&headers, address, &Method::POST, "/v1/sync/enroll")
         .await?;
-    let pending = {
-        let mut guard = state
-            .pending_pairing
-            .lock()
-            .map_err(|_| ApiError::Internal)?;
-        let pending = guard.as_ref().ok_or(ApiError::PairingUnavailable)?;
-        pending
-            .validate_response(&response, &principal)
-            .map_err(|_| ApiError::InvalidRequest)?;
-        guard.take().ok_or(ApiError::PairingUnavailable)?
+    let pending = PendingPairing::new(
+        state.workspace_id.clone(),
+        state.tunnel_url.clone(),
+        state.workos_issuer.clone(),
+        state.workos_audience.clone(),
+        state.key.clone(),
+        state.owner.clone(),
+        ACCOUNT_ENROLLMENT_TTL_MS,
+    );
+    let offer = pending.offer.clone();
+    let response = PairingResponse {
+        phone_public_key: request.phone_public_key,
+        one_time_token: offer.one_time_token.clone(),
     };
     let grant = pending
         .complete(&response, &principal)
         .map_err(|_| ApiError::InvalidRequest)?;
     set_status(&state, SyncState::WaitingForDevice);
-    Ok(Json(grant))
+    Ok(Json(AccountEnrollmentResponse { offer, grant }))
 }
 
 #[derive(Deserialize)]
@@ -701,7 +728,6 @@ enum ApiError {
     Unauthorized,
     Forbidden,
     TooManyRequests,
-    PairingUnavailable,
     InvalidRequest,
     PayloadTooLarge,
     NotFound,
@@ -714,7 +740,7 @@ impl IntoResponse for ApiError {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
-            Self::PairingUnavailable | Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotFound => StatusCode::NOT_FOUND,
             Self::InvalidRequest => StatusCode::BAD_REQUEST,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,

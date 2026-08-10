@@ -3,7 +3,7 @@
 Status: usable end-to-end implementation pending live-device acceptance. The
 repository includes the authenticated loopback origin, database scanner and
 projector, bounded delta pagination, end-to-end encrypted chunk transfer,
-atomic attachment reconstruction, desktop pairing action, persistent paired
+atomic attachment reconstruction, automatic same-account device enrollment, persistent
 Cloudflare connector and relay, durable iPhone replica, foreground WebSocket
 hints, and menu-bar state. APNs, camera QR scanning, device revocation/key
 rotation, and live physical-device acceptance are not complete; do not treat
@@ -31,7 +31,7 @@ and workspace encryption keys must never be placed in source, xcconfig, logs,
 process arguments, or SQLite.
 
 The installed desktop defaults to Production, generates and persists a
-workspace UUID on first pairing, and remembers the chosen environment in
+workspace UUID on first account link, and remembers the chosen environment in
 SQLite. `CLIPPY_SYNC_ENVIRONMENT`, `CLIPPY_SYNC_WORKSPACE_ID`,
 `CLIPPY_SYNC_TUNNEL_URL`, `CLIPPY_WORKOS_ISSUER`, and
 `CLIPPY_WORKOS_AUDIENCE` are development overrides, not requirements for a
@@ -89,24 +89,25 @@ The wire JSON in Rust and Swift uses the same camel-case schema. SQLite stores
 immutable operations, frontiers, conflicts, and verified chunk locations in
 additive `sync_*` tables, leaving current Clippy IDs and tables intact.
 
-## Pairing and end-to-end encryption
+## Account enrollment and end-to-end encryption
 
 Cloudflare terminates edge TLS, so TLS is necessary but not the only protection.
 All deltas and file chunks are encrypted before reaching the tunnel.
 
 1. The Mac generates one persistent random 256-bit workspace key and stores it
-   in Keychain. Pairing another device never rotates or replaces this key.
-2. For each pairing, the Mac creates an ephemeral X25519 key and 256-bit
-   one-time token. The QR/out-of-band offer contains schema version, workspace,
-   expected hostname, WorkOS issuer/audience, Mac public key, token, and expiry.
-3. The authenticated iPhone returns its ephemeral public key and token over TLS.
-   The Mac checks expiry, token in constant time, and the validated WorkOS
-   subject/organization.
-4. Both sides derive a one-use wrap key with X25519 and HKDF-SHA256. Pairing AAD
+   in Keychain. Enrolling another same-account device never rotates or replaces
+   this key.
+2. After sign-in, the relay exposes only environments owned by that WorkOS
+   subject. The iPhone obtains a DPoP-bound environment session and sends a
+   fresh ephemeral X25519 public key to `/v1/sync/enroll`.
+3. The Mac verifies the session belongs to its exact WorkOS subject and optional
+   organization, then creates an internal ephemeral X25519 key and one-time
+   token. No QR, copied code, or user-visible pairing step exists.
+4. Both sides derive a one-use wrap key with X25519 and HKDF-SHA256. Enrollment AAD
    length-prefixes and binds version, workspace, tunnel URL, WorkOS
    issuer/audience, expiry, both public keys, WorkOS `sub`, and optional
    `org_id`.
-5. The Mac encrypts the existing workspace key in a pairing grant using
+5. The Mac encrypts the existing workspace key in an enrollment grant using
    ChaCha20-Poly1305 with a random 96-bit nonce. The iPhone unwraps and stores it
    in Keychain. The ephemeral private keys and one-time token are discarded.
 6. Delta and chunk envelopes use ChaCha20-Poly1305 with a fresh random nonce and
@@ -136,7 +137,7 @@ origin. Cloudflare Tunnel supports HTTPS/WebSockets and uses outbound-only
 connections. The Mac origin must still require a valid WorkOS JWT, E2EE, body
 limits, and unauthenticated rate limiting.
 
-`cloudflared` is not installed as an OS service. Once a workspace is paired it
+`cloudflared` is not installed as an OS service. Once an account is linked it
 stays alive as a child of the running Clippy process so a foreground phone can
 wake a hidden Mac without polling. `TunnelRunner` reads the
 environment-specific token from macOS Keychain service
@@ -144,7 +145,7 @@ environment-specific token from macOS Keychain service
 `cloudflare-tunnel:production`, writes a `0600` temporary token file, launches
 `cloudflared tunnel --no-autoupdate run --token-file <path>` with
 stdin/stdout/stderr detached, retains the owner-only file for the child lifetime,
-then unlinks it on stop/drop. Initial activation is on pairing or restoration
+then unlinks it on stop/drop. Initial activation is on account link or restoration
 of a prior workspace. Child restart uses capped exponential backoff with jitter.
 
 The steady state is push-driven over WebSocket. Hints contain no application
