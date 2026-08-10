@@ -13,6 +13,11 @@ public struct VerifiedJWT: Equatable, Sendable {
     }
 }
 
+public enum JWTTokenKind: Sendable {
+    case access
+    case id
+}
+
 public protocol JWKSLoading: Sendable {
     func loadJWKS(from url: URL) async throws -> Data
 }
@@ -87,7 +92,11 @@ public actor JWTVerifier {
         self.now = now
     }
 
-    public func verify(_ token: String, expectedNonce: String? = nil) async throws -> VerifiedJWT {
+    public func verify(
+        _ token: String,
+        kind: JWTTokenKind = .access,
+        expectedNonce: String? = nil
+    ) async throws -> VerifiedJWT {
         guard token.utf8.count <= 65_536 else { throw JWTVerificationError.invalidToken }
         let segments = token.split(separator: ".", omittingEmptySubsequences: false)
         guard segments.count == 3,
@@ -136,8 +145,15 @@ public actor JWTVerifier {
         guard claims.iss == issuer.absoluteString else {
             throw JWTVerificationError.wrongIssuer
         }
-        guard claims.aud.values.contains(audience) else {
-            throw JWTVerificationError.wrongAudience
+        switch kind {
+        case .access:
+            guard claims.clientId == audience else {
+                throw JWTVerificationError.wrongAudience
+            }
+        case .id:
+            guard claims.aud?.values.contains(audience) == true else {
+                throw JWTVerificationError.wrongAudience
+            }
         }
         guard !claims.sub.isEmpty, claims.sub.utf8.count <= 1_024 else {
             throw JWTVerificationError.invalidSubject
@@ -215,7 +231,8 @@ private struct JWTHeader: Decodable, Sendable {
 
 private struct JWTClaims: Decodable, Sendable {
     let iss: String
-    let aud: JWTAudience
+    let aud: JWTAudience?
+    let clientId: String?
     let exp: TimeInterval
     let sub: String
     let nonce: String?
@@ -223,6 +240,7 @@ private struct JWTClaims: Decodable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case iss, aud, exp, sub, nonce
+        case clientId = "client_id"
         case orgId = "org_id"
     }
 }

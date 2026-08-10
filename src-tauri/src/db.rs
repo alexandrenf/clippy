@@ -40,6 +40,7 @@ pub struct Item {
     pub created_at: i64,
     pub updated_at: i64,
     pub attachments: Vec<Attachment>,
+    pub sync_conflict: bool,
 }
 
 #[derive(Serialize, Clone)]
@@ -71,7 +72,8 @@ pub fn init(path: &Path) -> rusqlite::Result<Connection> {
          CREATE TABLE IF NOT EXISTS sections(
            id INTEGER PRIMARY KEY AUTOINCREMENT,
            name TEXT NOT NULL,
-           created_at INTEGER NOT NULL
+           created_at INTEGER NOT NULL,
+           sync_id TEXT
          );
          CREATE TABLE IF NOT EXISTS items(
            id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,7 +81,8 @@ pub fn init(path: &Path) -> rusqlite::Result<Connection> {
            content TEXT NOT NULL,
            done INTEGER NOT NULL DEFAULT 0,
            created_at INTEGER NOT NULL,
-           updated_at INTEGER NOT NULL
+           updated_at INTEGER NOT NULL,
+           sync_id TEXT
          );
          CREATE TABLE IF NOT EXISTS settings(
            key TEXT PRIMARY KEY,
@@ -92,7 +95,8 @@ pub fn init(path: &Path) -> rusqlite::Result<Connection> {
            stored_path TEXT NOT NULL UNIQUE,
            media_type TEXT NOT NULL,
            size INTEGER NOT NULL,
-           created_at INTEGER NOT NULL
+           created_at INTEGER NOT NULL,
+           sync_id TEXT
          );
          CREATE INDEX IF NOT EXISTS idx_items_section_id ON items(section_id, id);
          CREATE INDEX IF NOT EXISTS idx_attachments_item_id ON attachments(item_id, id);",
@@ -164,7 +168,15 @@ pub fn section_name_exists(
 }
 
 pub fn list_sections(conn: &Connection) -> rusqlite::Result<Vec<Section>> {
-    let mut stmt = conn.prepare("SELECT id, name FROM sections ORDER BY id")?;
+    let has_sort_index = conn
+        .prepare("SELECT sync_sort_index FROM sections LIMIT 0")
+        .is_ok();
+    let sql = if has_sort_index {
+        "SELECT id,name FROM sections ORDER BY COALESCE(sync_sort_index,CAST(id AS REAL)),id"
+    } else {
+        "SELECT id,name FROM sections ORDER BY id"
+    };
+    let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map([], |r| {
         Ok(Section {
             id: r.get(0)?,
@@ -175,6 +187,14 @@ pub fn list_sections(conn: &Connection) -> rusqlite::Result<Vec<Section>> {
 }
 
 pub fn list_items(conn: &Connection) -> rusqlite::Result<Vec<Item>> {
+    let conflict_ids: std::collections::HashSet<String> = conn
+        .prepare("SELECT entity_id FROM sync_content_conflicts")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<_>>()
+        })
+        .unwrap_or_default();
     let mut attachments_by_item: HashMap<i64, Vec<Attachment>> = HashMap::new();
     let mut attachment_stmt = conn.prepare(
         "SELECT item_id, id, name, stored_path, media_type, size
@@ -202,7 +222,8 @@ pub fn list_items(conn: &Connection) -> rusqlite::Result<Vec<Item>> {
     }
 
     let mut stmt = conn.prepare(
-        "SELECT id, section_id, content, done, created_at, updated_at FROM items ORDER BY id",
+        "SELECT id, section_id, content, done, created_at, updated_at, sync_id
+         FROM items ORDER BY id",
     )?;
     let rows = stmt.query_map([], |r| {
         let id = r.get(0)?;
@@ -214,6 +235,9 @@ pub fn list_items(conn: &Connection) -> rusqlite::Result<Vec<Item>> {
             created_at: r.get(4)?,
             updated_at: r.get(5)?,
             attachments: attachments_by_item.remove(&id).unwrap_or_default(),
+            sync_conflict: r
+                .get::<_, Option<String>>(6)?
+                .is_some_and(|sync_id| conflict_ids.contains(&sync_id)),
         })
     })?;
     rows.collect()

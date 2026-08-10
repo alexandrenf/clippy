@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "clippy-relay-staging",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "relay-staging.saudecomalex.com",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "WORKOS_ISSUER": "https://fashionable-machine-85-staging.authkit.app",
+    "WORKOS_AUDIENCE": "client_01KZMNQXBXWT2A807NZCE6V2HV",
+    "RELAY_ISSUER": "https://relay-staging.saudecomalex.com",
+    "PUBLIC_HOSTNAME": "clippy-staging.saudecomalex.com",
+    "ORIGIN_PORT": "49832",
+    "CLOUDFLARE_ACCOUNT_ID": "c5956ea15b77ce47ce236a68ffc8873e",
+    "CLOUDFLARE_ZONE_ID": "8ba8c1b4c19d5de44fb87d50ca89daa5"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "clippy-relay-staging",
+      "database_id": "40b7621b-5915-43a4-840a-309766a02d2c",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

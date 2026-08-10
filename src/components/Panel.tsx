@@ -67,6 +67,7 @@ export default function Panel() {
   const [showSettings, setShowSettings] = useState(false);
   const [appMenu, setAppMenu] = useState<{ x: number; y: number } | null>(null);
   const [toast, setToast] = useState<{ message: string; error: boolean } | null>(null);
+  const [toastExiting, setToastExiting] = useState(false);
   const [confirmClear, setConfirmClear] = useState<ClearSettledRequest | null>(null);
   const [deletingList, setDeletingList] = useState<Section | null>(null);
   const [settlingIds, setSettlingIds] = useState<number[]>([]);
@@ -81,6 +82,7 @@ export default function Panel() {
   const composerRef = useRef<HTMLDivElement>(null);
   const attachmentsRef = useRef<AttachmentDraft[]>(attachments);
   const toastTimer = useRef<number>();
+  const toastExitTimer = useRef<number>();
   const settleTimers = useRef<number[]>([]);
   const settlingIdsRef = useRef(new Set<number>());
   const dragKindRef = useRef<"files" | "text" | "none">("none");
@@ -90,13 +92,17 @@ export default function Panel() {
 
   const flashToast = useCallback((msg: string, error = false) => {
     setToast({ message: msg, error });
+    setToastExiting(false);
     window.clearTimeout(toastTimer.current);
+    window.clearTimeout(toastExitTimer.current);
+    toastExitTimer.current = window.setTimeout(() => setToastExiting(true), 2050);
     toastTimer.current = window.setTimeout(() => setToast(null), 2200);
   }, []);
 
   useEffect(
     () => () => {
       window.clearTimeout(toastTimer.current);
+      window.clearTimeout(toastExitTimer.current);
       settleTimers.current.forEach((timer) => window.clearTimeout(timer));
     },
     [],
@@ -1341,7 +1347,11 @@ export default function Panel() {
       </div>
 
       {toast && (
-        <div className={`toast${toast.error ? " error" : ""}`} role="status" aria-live="polite">
+        <div
+          className={`toast${toast.error ? " error" : ""}${toastExiting ? " exiting" : ""}`}
+          role="status"
+          aria-live="polite"
+        >
           <span className="toast-icon" aria-hidden>{toast.error ? "!" : "✓"}</span>
           <span>{toast.message}</span>
         </div>

@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "clippy-relay-production",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "relay.saudecomalex.com",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "WORKOS_ISSUER": "https://brave-mermaid-84.authkit.app",
+    "WORKOS_AUDIENCE": "client_01KZMNK73NWS9NDAPC3T54S2PE",
+    "RELAY_ISSUER": "https://relay.saudecomalex.com",
+    "PUBLIC_HOSTNAME": "clippy.saudecomalex.com",
+    "ORIGIN_PORT": "49833",
+    "CLOUDFLARE_ACCOUNT_ID": "c5956ea15b77ce47ce236a68ffc8873e",
+    "CLOUDFLARE_ZONE_ID": "8ba8c1b4c19d5de44fb87d50ca89daa5"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "clippy-relay-production",
+      "database_id": "f853b8ab-dbae-4175-8ec8-0050c1086297",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

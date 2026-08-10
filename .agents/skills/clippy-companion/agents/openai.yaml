@@ -1,0 +1,10 @@
+interface:
+  display_name: "Clippy Companion"
+  short_description: "Read lists and manage todos through Clippy"
+  default_prompt: "Use $clippy-companion to show my Clippy lists and help me configure safe todo access."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "clippy"
+      description: "Local Clippy lists and todo tools"
+      transport: "stdio"

@@ -1,0 +1,4 @@
+[build]
+# Desktop releases intentionally support Apple Silicon Macs only. This avoids
+# universal-binary size/cost and lets release LTO optimize one architecture.
+target = "aarch64-apple-darwin"

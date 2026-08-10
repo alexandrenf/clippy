@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "workspaceId": "11111111-1111-4111-8111-111111111111",
+  "frontier": {"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa": 11},
+  "operations": [
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"section","entityId":"22222222-2222-4222-8222-222222222222","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":1},"mutation":{"type":"setMetadata","field":"name","value":"Inbox"}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"section","entityId":"22222222-2222-4222-8222-222222222222","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":2},"mutation":{"type":"setMetadata","field":"sortIndex","value":2}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"item","entityId":"33333333-3333-4333-8333-333333333333","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":3},"mutation":{"type":"setMetadata","field":"sectionId","value":"22222222-2222-4222-8222-222222222222"}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"item","entityId":"33333333-3333-4333-8333-333333333333","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":4},"mutation":{"type":"setMetadata","field":"createdAt","value":1786276800000}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"item","entityId":"33333333-3333-4333-8333-333333333333","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":5},"mutation":{"type":"setMetadata","field":"done","value":true}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"item","entityId":"33333333-3333-4333-8333-333333333333","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":6},"mutation":{"type":"setContent","context":{"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa":5},"value":"From Rust"}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"attachment","entityId":"44444444-4444-4444-8444-444444444444","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":7},"mutation":{"type":"setMetadata","field":"itemId","value":"33333333-3333-4333-8333-333333333333"}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"attachment","entityId":"44444444-4444-4444-8444-444444444444","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":8},"mutation":{"type":"setMetadata","field":"name","value":"note.txt"}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"attachment","entityId":"44444444-4444-4444-8444-444444444444","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":9},"mutation":{"type":"setMetadata","field":"mediaType","value":"text/plain"}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"attachment","entityId":"44444444-4444-4444-8444-444444444444","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":10},"mutation":{"type":"setMetadata","field":"size","value":4}},
+    {"schemaVersion":1,"workspaceId":"11111111-1111-4111-8111-111111111111","entityKind":"attachment","entityId":"44444444-4444-4444-8444-444444444444","dot":{"actorId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","counter":11},"mutation":{"type":"setMetadata","field":"manifest","value":{"schemaVersion":1,"fileSha256":"0000000000000000000000000000000000000000000000000000000000000000","size":4,"chunkSize":4,"chunks":[{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":4}]}}}
+  ]
+}

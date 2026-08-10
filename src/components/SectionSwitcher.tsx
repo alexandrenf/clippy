@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useMotionExit } from "../motion";
 import type { Section } from "../types";
 
 interface Row {
@@ -27,6 +28,7 @@ export default function SectionSwitcher({
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { isExiting, requestExit } = useMotionExit(onClose);
 
   useEffect(() => inputRef.current?.focus(), []);
 
@@ -49,11 +51,11 @@ export default function SectionSwitcher({
   const choose = (row: Row) => {
     if (row.create) onCreate(query.trim());
     else onSelect(row.id);
-    onClose();
+    requestExit();
   };
 
   return (
-    <div className="overlay" onMouseDown={onClose}>
+    <div className={`overlay${isExiting ? " is-closing" : ""}`} onMouseDown={requestExit}>
       <div
         className="switcher"
         role="dialog"
@@ -83,7 +85,7 @@ export default function SectionSwitcher({
               e.preventDefault();
               if (rows[index]) choose(rows[index]);
             } else if (e.key === "Escape") {
-              onClose();
+              requestExit();
             }
           }}
         />

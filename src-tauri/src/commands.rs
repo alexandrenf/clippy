@@ -8,7 +8,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::{capture, db, glass, panel};
+use crate::{capture, db, glass, panel, sync};
 
 type CmdResult<T> = Result<T, String>;
 
@@ -17,6 +17,7 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 }
 
 fn refresh(app: &AppHandle) {
+    sync::wake(app);
     let _ = app.emit("refresh", ());
 }
 
@@ -256,6 +257,56 @@ pub fn clear_paste_drafts(app: &AppHandle) {
             eprintln!("clippy: could not clear pasted-image drafts: {error}");
         }
     }
+}
+
+fn bundled_companion_executable() -> CmdResult<PathBuf> {
+    let executable = std::env::current_exe().map_err(err)?;
+    let companion = executable
+        .parent()
+        .ok_or_else(|| "Clippy’s install location is unavailable".to_string())?
+        .join("clippy-mcp");
+    if companion.is_file() {
+        Ok(companion)
+    } else {
+        Err("This Clippy build does not include the agent companion".into())
+    }
+}
+
+#[tauri::command]
+pub async fn agent_companion_status() -> CmdResult<bool> {
+    let companion = bundled_companion_executable()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        std::process::Command::new(companion)
+            .arg("doctor")
+            .output()
+            .map(|output| {
+                output.status.success()
+                    && String::from_utf8_lossy(&output.stdout).contains("codex_mcp: configured")
+                    && String::from_utf8_lossy(&output.stdout)
+                        .contains("companion_skill: installed")
+            })
+            .map_err(err)
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
+pub async fn install_agent_companion() -> CmdResult<()> {
+    let companion = bundled_companion_executable()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let status = std::process::Command::new(companion)
+            .arg("install-codex")
+            .status()
+            .map_err(err)?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("Codex could not enable the Clippy companion".into())
+        }
+    })
+    .await
+    .map_err(err)?
 }
 
 #[tauri::command]

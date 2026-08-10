@@ -1,0 +1,219 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Clippy Relay Control Plane",
+    "version": "1.0.0",
+    "description": "Authentication, environment allocation, and one-shot bootstrap control plane. The relay is not in the normal sync data path. JSON field names are canonical snake_case."
+  },
+  "servers": [
+    { "url": "https://relay-staging.saudecomalex.com", "description": "Staging" },
+    { "url": "https://relay.saudecomalex.com", "description": "Production" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "WorkOSBearer": { "type": "http", "scheme": "bearer", "bearerFormat": "WorkOS RS256 JWT" },
+      "RelayDPoP": { "type": "http", "scheme": "DPoP", "bearerFormat": "Clippy relay HS256 JWT" },
+      "DPoPProof": { "type": "apiKey", "in": "header", "name": "DPoP", "description": "Fresh ES256 DPoP proof with an embedded public P-256 JWK." }
+    },
+    "schemas": {
+      "PublicJwk": {
+        "type": "object",
+        "required": ["kty"],
+        "additionalProperties": true,
+        "properties": {
+          "kty": { "type": "string" }, "crv": { "type": "string" }, "x": { "type": "string" },
+          "y": { "type": "string" }, "alg": { "type": "string" }, "kid": { "type": "string" }, "use": { "type": "string" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": { "code": { "type": "string" }, "message": { "type": "string" } }
+          }
+        }
+      },
+      "Environment": {
+        "type": "object",
+        "required": ["id", "environment_id", "workspace_id", "name", "status", "endpoint", "hostname", "generation", "created_at", "updated_at"],
+        "properties": {
+          "id": { "type": "string", "description": "Compatibility alias of environment_id." },
+          "environment_id": { "type": "string", "maxLength": 128 },
+          "workspace_id": { "type": "string", "description": "Always identical to environment_id." },
+          "name": { "type": "string", "maxLength": 120 },
+          "status": { "enum": ["provisioning", "inactive", "healthy", "degraded", "down", "error"] },
+          "endpoint": { "$ref": "#/components/schemas/Endpoint" },
+          "hostname": { "type": "string", "description": "A stage-prefixed opaque allocation beneath PUBLIC_HOSTNAME." },
+          "tunnel_id": { "type": ["string", "null"] },
+          "generation": { "type": "integer", "minimum": 1 },
+          "created_at": { "type": "integer", "description": "Unix seconds." },
+          "updated_at": { "type": "integer", "description": "Unix seconds." }
+        }
+      },
+      "Endpoint": {
+        "type": "object",
+        "required": ["http_base_url", "ws_base_url"],
+        "properties": {
+          "http_base_url": { "type": "string", "format": "uri", "pattern": "^https://" },
+          "ws_base_url": { "type": "string", "format": "uri", "pattern": "^wss://" }
+        }
+      },
+      "IngressRule": {
+        "type": "object",
+        "required": ["service"],
+        "properties": { "hostname": { "type": "string" }, "service": { "type": "string" } }
+      },
+      "Runtime": {
+        "type": "object",
+        "required": ["tunnel_id", "hostname", "connector_token", "ingress", "relay_signing_public_jwk"],
+        "properties": {
+          "tunnel_id": { "type": "string" },
+          "hostname": { "type": "string" },
+          "connector_token": { "type": "string", "writeOnly": true, "description": "Cloudflare connector credential; never persisted by the relay." },
+          "ingress": { "type": "array", "items": { "$ref": "#/components/schemas/IngressRule" } },
+          "relay_signing_public_jwk": { "$ref": "#/components/schemas/PublicJwk" }
+        }
+      }
+    },
+    "responses": {
+      "Error": { "description": "Error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "NoContent": { "description": "Completed with no response body." }
+    }
+  },
+  "paths": {
+    "/v1/auth/token": {
+      "post": {
+        "operationId": "issueRelayToken",
+        "security": [{ "WorkOSBearer": [], "DPoPProof": [] }],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "maxProperties": 0 } } } },
+        "responses": {
+          "200": {
+            "description": "Short-lived relay access token bound to the DPoP key.",
+            "content": { "application/json": { "schema": {
+              "type": "object", "required": ["access_token", "token_type", "expires_in", "scope", "cnf"],
+              "properties": {
+                "access_token": { "type": "string" }, "token_type": { "const": "DPoP" },
+                "expires_in": { "type": "integer", "const": 300 }, "scope": { "const": "relay:environments" },
+                "cnf": { "type": "object", "required": ["jkt"], "properties": { "jkt": { "type": "string" } } }
+              }
+            } } }
+          },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/environments/link/challenge": {
+      "post": {
+        "operationId": "createLinkChallenge",
+        "security": [{ "WorkOSBearer": [], "DPoPProof": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object", "required": ["environment_id", "name"],
+          "properties": { "environment_id": { "type": "string", "maxLength": 128 }, "name": { "type": "string", "maxLength": 120 } }
+        } } } },
+        "responses": {
+          "201": { "description": "Five-minute one-use challenge.", "content": { "application/json": { "schema": {
+            "type": "object", "required": ["challenge_id", "challenge", "expires_at"],
+            "properties": { "challenge_id": { "type": "string" }, "challenge": { "type": "string" }, "expires_at": { "type": "string", "format": "date-time" } }
+          } } } },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/environments/link": {
+      "post": {
+        "operationId": "linkEnvironment",
+        "description": "The Ed25519 signature is base64url(raw signature) over RFC 8785 canonical JSON of exactly {challenge,challenge_id,environment_id,environment_public_jwk,issued_at,name}.",
+        "security": [{ "WorkOSBearer": [], "DPoPProof": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object", "required": ["challenge_id", "environment_id", "name", "environment_public_jwk", "issued_at", "signature"],
+          "properties": {
+            "challenge_id": { "type": "string" }, "environment_id": { "type": "string", "maxLength": 128 },
+            "name": { "type": "string", "maxLength": 120 }, "environment_public_jwk": { "$ref": "#/components/schemas/PublicJwk" },
+            "issued_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "integer" }] }, "signature": { "type": "string" }
+          }
+        } } } },
+        "responses": {
+          "200": { "description": "Pinned environment and connector runtime.", "content": { "application/json": { "schema": {
+            "type": "object", "required": ["environment", "endpoint", "runtime"],
+            "properties": { "environment": { "$ref": "#/components/schemas/Environment" }, "endpoint": { "$ref": "#/components/schemas/Endpoint" }, "runtime": { "$ref": "#/components/schemas/Runtime" } }
+          } } } },
+          "409": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/environments": {
+      "get": {
+        "operationId": "listEnvironments",
+        "security": [{ "RelayDPoP": [], "DPoPProof": [] }],
+        "responses": {
+          "200": { "description": "Owner-scoped linked environments.", "content": { "application/json": { "schema": {
+            "type": "object", "required": ["environments"], "properties": { "environments": { "type": "array", "items": { "$ref": "#/components/schemas/Environment" } } }
+          } } } }
+        }
+      }
+    },
+    "/v1/environments/{environment_id}/status": {
+      "parameters": [{ "name": "environment_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "get": {
+        "operationId": "getEnvironmentStatus",
+        "security": [{ "RelayDPoP": [], "DPoPProof": [] }],
+        "responses": {
+          "200": { "description": "Live tunnel status.", "content": { "application/json": { "schema": { "type": "object", "required": ["environment"], "properties": { "environment": { "$ref": "#/components/schemas/Environment" } } } } } },
+          "404": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/environments/{environment_id}/connect": {
+      "parameters": [{ "name": "environment_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "post": {
+        "operationId": "connectEnvironment",
+        "description": "Mints a bootstrap credential directly at the managed environment. The relay verifies the environment response and never persists the credential.",
+        "security": [{ "RelayDPoP": [], "DPoPProof": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object", "required": ["client_nonce"], "properties": { "client_nonce": { "type": "string", "pattern": "^[A-Za-z0-9_-]{16,256}$" } }
+        } } } },
+        "responses": {
+          "200": { "description": "One-shot bootstrap credential.", "content": { "application/json": { "schema": {
+            "type": "object", "required": ["environment_id", "workspace_id", "endpoint", "bootstrap_credential", "expires_at", "client_jkt"],
+            "properties": {
+              "environment_id": { "type": "string" }, "workspace_id": { "type": "string" }, "endpoint": { "$ref": "#/components/schemas/Endpoint" },
+              "bootstrap_credential": { "type": "string", "writeOnly": true }, "expires_at": { "oneOf": [{ "type": "string", "format": "date-time" }, { "type": "integer" }] }, "client_jkt": { "type": "string" }
+            }
+          } } } },
+          "502": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/v1/environments/{environment_id}": {
+      "parameters": [{ "name": "environment_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "delete": {
+        "operationId": "unlinkEnvironment",
+        "security": [{ "RelayDPoP": [], "DPoPProof": [] }],
+        "responses": { "204": { "$ref": "#/components/responses/NoContent" }, "404": { "$ref": "#/components/responses/Error" } }
+      }
+    },
+    "/v1/environments/{environment_id}/tunnel": {
+      "parameters": [{ "name": "environment_id", "in": "path", "required": true, "schema": { "type": "string" } }],
+      "delete": {
+        "operationId": "deleteEnvironmentTunnel",
+        "description": "Idempotent for an already-unlinked allocation. Supplying generation adds an explicit stale-client guard.",
+        "security": [{ "RelayDPoP": [], "DPoPProof": [] }],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "required": ["generation"], "properties": { "generation": { "type": "integer", "minimum": 1 } } } } } },
+        "responses": { "204": { "$ref": "#/components/responses/NoContent" }, "409": { "$ref": "#/components/responses/Error" } }
+      }
+    }
+  },
+  "x-environment-mint-contract": {
+    "request": {
+      "method": "POST", "path": "/v1/connect/mint", "body": { "proof": "compact EdDSA JWT" },
+      "claims": ["iss", "aud=clippy-env:<environment_id>", "sub", "org_id", "environment_id", "endpoint={http_base_url,ws_base_url}", "client_jkt", "client_nonce", "generation", "jti", "iat", "exp"]
+    },
+    "response": {
+      "fields": ["environment_id", "bootstrap_credential", "expires_at", "client_jkt", "client_nonce", "signature"],
+      "signature": "Ed25519 base64url signature over RFC 8785 canonical JSON of the other five response fields"
+    }
+  }
+}

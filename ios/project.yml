@@ -27,6 +27,7 @@ targets:
           - CFBundleTypeRole: Editor
             CFBundleURLSchemes:
               - clippy-sync
+        UILaunchScreen: {}
         WORKOS_ISSUER: $(WORKOS_ISSUER)
         WORKOS_CLIENT_ID: $(WORKOS_CLIENT_ID)
         WORKOS_REDIRECT_URI: clippy-sync://auth/callback

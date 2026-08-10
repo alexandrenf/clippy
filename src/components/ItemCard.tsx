@@ -182,6 +182,9 @@ function ItemCard({
         ) : (
           <div className="card-content">{renderInline(item.content)}</div>
         )}
+        {item.syncConflict && !editing && (
+          <div className="settled-context" role="status">Concurrent edits — edit to resolve</div>
+        )}
       </div>
       {item.done && settledContext && (
         <span className="settled-context">{settledContext}</span>
@@ -196,6 +199,7 @@ export default memo(ItemCard, (previous, next) => {
     previous.item.content === next.item.content &&
     previous.item.done === next.item.done &&
     previous.item.sectionId === next.item.sectionId &&
+    previous.item.syncConflict === next.item.syncConflict &&
     previous.item.attachments.length === next.item.attachments.length &&
     previous.item.attachments.every(
       (attachment, index) => attachment.id === next.item.attachments[index]?.id,

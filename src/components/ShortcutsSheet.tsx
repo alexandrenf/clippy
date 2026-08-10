@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useMotionExit } from "../motion";
 
 const IS_MAC = navigator.userAgent.includes("Mac");
 const MOD = IS_MAC ? "⌘" : "Ctrl";
@@ -41,6 +42,7 @@ export default function ShortcutsSheet({ showShortcut, captureShortcut, onClose 
     { title: "In Clippy", rows: IN_APP_ROWS },
   ];
   const closeRef = useRef<HTMLButtonElement>(null);
+  const { isExiting, requestExit } = useMotionExit(onClose);
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -48,15 +50,15 @@ export default function ShortcutsSheet({ showShortcut, captureShortcut, onClose 
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
-        onClose();
+        requestExit();
       }
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [onClose]);
+  }, [requestExit]);
 
   return (
-    <div className="overlay" onMouseDown={onClose}>
+    <div className={`overlay${isExiting ? " is-closing" : ""}`} onMouseDown={requestExit}>
       <div
         className="sheet"
         role="dialog"
@@ -66,7 +68,7 @@ export default function ShortcutsSheet({ showShortcut, captureShortcut, onClose 
       >
         <div className="sheet-heading">
           <div id="shortcuts-title" className="sheet-title">Shortcuts</div>
-          <button ref={closeRef} className="sheet-close" aria-label="Close shortcuts" onClick={onClose}>×</button>
+          <button ref={closeRef} className="sheet-close" aria-label="Close shortcuts" onClick={requestExit}>×</button>
         </div>
         {groups.map((g) => (
           <div key={g.title} className="sheet-group">

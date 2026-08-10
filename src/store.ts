@@ -68,6 +68,18 @@ export const api = {
   accessibilityStatus: () => invoke<boolean>("accessibility_status"),
   requestAccessibilityPermission: () => invoke<boolean>("request_accessibility_permission"),
   openAccessibilitySettings: () => invoke<void>("open_accessibility_settings"),
+  agentCompanionStatus: () => invoke<boolean>("agent_companion_status"),
+  installAgentCompanion: () => invoke<void>("install_agent_companion"),
+  signInSync: (environment: "staging" | "production" = "production") =>
+    invoke<{ environment: string; endpoint: string }>("sign_in_sync", { environment }),
+  syncAuthStatus: (environment: "staging" | "production" = "production") =>
+    invoke<boolean>("sync_auth_status", { environment }),
+  beginSyncPairing: (environment: "staging" | "production" = "production") =>
+    invoke<{ environment: string; payload: string; expiresAtMs: number }>("begin_sync_pairing", {
+      environment,
+    }),
+  syncStatus: () =>
+    invoke<"idle" | "syncing" | "synced" | "waitingForDevice">("sync_status"),
 };
 
 export function applyTheme(theme: Theme) {

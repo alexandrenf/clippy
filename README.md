@@ -17,8 +17,9 @@ the useful parts of a to-do list, clipboard, and scratchpad one shortcut away.
 > the app to suit my preference. Clippy is not affiliated with Cooper's
 > maintainers, shadcn, Copper, or Microsoft.
 
-**Local and private.** No sync, telemetry, or account. Everything lives in a
-single SQLite file on your machine.
+**Local-first and private.** Everything lives in a SQLite file on your Mac.
+Telemetry is off, and an account is needed only when you enable the optional
+end-to-end encrypted iPhone sync.
 
 <p align="center">
   <img src="docs/screenshot-dark.png" width="330" alt="Clippy dark theme — empty state with capture shortcuts" />
@@ -29,20 +30,15 @@ single SQLite file on your machine.
 
 Grab the latest build from **[Releases](https://github.com/alexandrenf/clippy/releases/latest)**:
 
-| OS | File to download |
+| Mac | File to download |
 | --- | --- |
-| **Windows** | `Clippy_x.y.z_x64-setup.exe` or `Clippy_x.y.z_x64_en-US.msi` |
-| **macOS** (Intel & Apple Silicon) | `Clippy_x.y.z_universal.dmg` |
-| **Linux** | `Clippy_x.y.z_amd64.AppImage`, `.deb`, or `.rpm` |
+| **Apple Silicon** (M-series) | `Clippy_x.y.z_aarch64.dmg` |
 
 First-run notes:
 
-- **Windows:** SmartScreen may warn because the binary is unsigned. Click
-  *More info → Run anyway*.
 - **macOS:** Right-click → *Open* the unsigned app the first time, or run
   `xattr -dr com.apple.quarantine /Applications/Clippy.app`. Grant
   **Accessibility** permission for double-shift capture.
-- **Linux:** The AppImage is portable. On Wayland, use the fallback hotkeys.
 
 ## How it works
 
@@ -79,8 +75,11 @@ First-run notes:
   bottom. Clear Settled follows the current scope: Inbox, one list, or All.
 - **Quiet capture feedback** — Double Shift shows a brief click-through preview
   when the panel is closed, without taking focus from the app you're using.
-- **Local-only** — no registration or account is required; prompts and attachment
-  copies stay on the Mac.
+- **Local-first** — no registration is required for the Mac app; optional
+  end-to-end encrypted iPhone sync is enabled from Settings with an in-app
+  browser sign-in.
+- **Agent access** — an optional local MCP companion lets configured agents read
+  lists and, when you explicitly allow it, create or update lists and todos.
 - **Custom shortcuts** — record your preferred global Show and Capture hotkeys
   in Settings; Double Shift capture stays available.
 - **Inline formatting** — supports bold, italic, strikethrough, and code.
@@ -93,13 +92,13 @@ First-run notes:
 
 ## Building from source
 
-Prerequisites: [Rust](https://rustup.rs), Node 18+, and the
+Prerequisites: an Apple Silicon Mac, [Rust](https://rustup.rs), Node 18+, and the
 [Tauri 2 platform prerequisites](https://tauri.app/start/prerequisites/).
 
 ```sh
 npm install
 npm run tauri dev
-npm run tauri build
+npm run tauri -- build --target aarch64-apple-darwin
 ```
 
 Clippy uses a Rust core and React UI in the operating system webview—no
@@ -107,20 +106,15 @@ Electron.
 
 ## Platform notes
 
-- **macOS:** Clippy reads the focused app's selected text through the native
+- Clippy reads the focused app's selected text through the native
   Accessibility API first, without touching the clipboard. Apps that do not
   expose selection use a copy/pasteboard compatibility path that preserves
   non-text clipboard data when capture is empty.
-- **Linux:** The raw keyboard hook works on X11. Global shortcuts and tray
-  support vary by Wayland compositor; the tray's *Capture clipboard* action
-  remains available where a tray is shown.
 
 ## Data
 
-- Database: `clippy.db` in the app data directory
-  (`%APPDATA%/app.clippy.desktop` on Windows,
-  `~/Library/Application Support/app.clippy.desktop` on macOS,
-  `~/.local/share/app.clippy.desktop` on Linux).
+- Database: `clippy.db` in
+  `~/Library/Application Support/app.clippy.desktop`.
 - On first launch, Clippy copies an existing Cooper database into the new
   location when possible, leaving the original untouched.
 - `⋯ → Export to Markdown` writes `clippy-export.md` to Documents.

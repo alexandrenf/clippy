@@ -1,12 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "mainBinaryName": "clippy",
   "productName": "Clippy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "app.clippy.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run build && npm run prepare:sidecars",
     "frontendDist": "../dist"
   },
   "app": {
@@ -70,6 +71,9 @@
     ],
     "category": "Productivity",
     "shortDescription": "Capture things you want to keep while working with AI.",
-    "longDescription": "Clippy combines the useful parts of a to-do list, a clipboard, and a scratchpad. It sits next to where you work, is always one shortcut away, and works with all your AI apps, terminals and browsers. Local and private — no sync, no account."
+    "longDescription": "Clippy combines the useful parts of a to-do list, a clipboard, and a scratchpad. It sits next to where you work, is always one shortcut away, and works with AI apps, terminals, and browsers. It is local-first and private, with optional end-to-end encrypted device sync and local agent access.",
+    "externalBin": [
+      "target/aarch64-apple-darwin/release/clippy-mcp"
+    ]
   }
 }

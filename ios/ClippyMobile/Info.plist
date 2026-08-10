@@ -37,6 +37,8 @@
 	<string>$(SYNC_ENDPOINT_HOST_SUFFIX)</string>
 	<key>SYNC_ENVIRONMENT</key>
 	<string>$(SYNC_ENVIRONMENT)</string>
+	<key>UILaunchScreen</key>
+	<dict/>
 	<key>WORKOS_CLIENT_ID</key>
 	<string>$(WORKOS_CLIENT_ID)</string>
 	<key>WORKOS_ISSUER</key>

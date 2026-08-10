@@ -586,8 +586,11 @@ fn send_copy() -> Result<(), String> {
     let modifier = Key::Meta;
     #[cfg(not(target_os = "macos"))]
     let modifier = Key::Control;
+    // Use the raw kVK_ANSI_C keycode on macOS. Key::Unicode asks Carbon for
+    // the active keyboard layout, and current macOS traps when that happens
+    // from Clippy's background capture worker.
     #[cfg(target_os = "macos")]
-    let copy_key = Key::Unicode('c');
+    let copy_key = Key::Other(8);
     // Ctrl+C can send SIGINT to a terminal when no text is selected. The
     // standard Ctrl+Insert copy chord avoids that destructive side effect.
     #[cfg(not(target_os = "macos"))]

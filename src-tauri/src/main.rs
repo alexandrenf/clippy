@@ -6,7 +6,10 @@ mod db;
 mod glass;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod mcp_bridge;
 mod panel;
+mod sync;
 mod tray;
 
 use std::{path::Path, sync::Mutex, time::Duration};
@@ -76,6 +79,12 @@ fn main() {
             commands::accessibility_status,
             commands::request_accessibility_permission,
             commands::open_accessibility_settings,
+            commands::agent_companion_status,
+            commands::install_agent_companion,
+            sync::sign_in_sync,
+            sync::sync_auth_status,
+            sync::begin_sync_pairing,
+            sync::sync_status,
         ])
         .setup(|app| {
             let launch_hidden = std::env::args_os().any(|arg| arg == "--hidden");
@@ -87,6 +96,7 @@ fn main() {
                 eprintln!("clippy: could not import the Cooper database: {error}");
             }
             let conn = db::init(&data_dir.join("clippy.db"))?;
+            sync::migrate(&conn)?;
             let glass_on = db::get_setting(&conn, "theme").as_deref() == Some("glass");
             let keep_on_top = db::get_setting(&conn, "keep_on_top").as_deref() != Some("false");
             let show_shortcut = db::get_setting(&conn, "show_shortcut")
@@ -94,11 +104,15 @@ fn main() {
             let capture_shortcut = db::get_setting(&conn, "capture_shortcut")
                 .unwrap_or_else(|| capture::DEFAULT_CAPTURE_SHORTCUT.into());
             app.manage(db::Db(Mutex::new(conn)));
+            app.manage(sync::status::SyncStatus::default());
 
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
 
             tray::create(app.handle())?;
+            sync::initialize(app.handle(), data_dir.join("clippy.db"), data_dir.clone());
+            #[cfg(target_os = "macos")]
+            mcp_bridge::start(app.handle().clone(), data_dir.clone());
             capture::start_capture_worker(app.handle().clone());
             if let Err(error) = capture::register_fallback_shortcuts(
                 app.handle(),

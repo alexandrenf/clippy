@@ -304,7 +304,7 @@ import Testing
         now: { now }
     )
     let token = try fixture.token(expiresAt: now.addingTimeInterval(300), nonce: "nonce-1")
-    let claims = try await verifier.verify(token, expectedNonce: "nonce-1")
+    let claims = try await verifier.verify(token, kind: .id, expectedNonce: "nonce-1")
 
     #expect(claims.subject == "user-123")
     #expect(claims.organizationId == "org-123")
@@ -352,6 +352,20 @@ import Testing
     let verifier = try fixture.verifier(now: now)
     let token = try fixture.token(
         audience: "wrong-audience",
+        expiresAt: now.addingTimeInterval(300)
+    )
+
+    await #expect(throws: JWTVerificationError.wrongAudience) {
+        try await verifier.verify(token, kind: .id)
+    }
+}
+
+@Test func jwtVerifierRejectsAccessTokenFromAnotherApplication() async throws {
+    let now = Date(timeIntervalSince1970: 2_000_000_000)
+    let fixture = try JWTFixture()
+    let verifier = try fixture.verifier(now: now)
+    let token = try fixture.token(
+        clientId: "wrong-client",
         expiresAt: now.addingTimeInterval(300)
     )
 
@@ -453,6 +467,7 @@ private struct JWTFixture {
     func token(
         issuer: String? = nil,
         audience: String? = nil,
+        clientId: String? = nil,
         expiresAt: Date,
         nonce: String? = nil
     ) throws -> String {
@@ -462,6 +477,7 @@ private struct JWTFixture {
         var claims: [String: Any] = [
             "iss": issuer ?? self.issuer.absoluteString,
             "aud": audience ?? self.audience,
+            "client_id": clientId ?? self.audience,
             "exp": expiresAt.timeIntervalSince1970,
             "sub": "user-123",
             "org_id": "org-123"

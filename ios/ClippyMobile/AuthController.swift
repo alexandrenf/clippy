@@ -172,7 +172,7 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
             throw AuthError.signedOut
         }
         let access = try await verifier.verify(accessToken)
-        let id = try await verifier.verify(idToken)
+        let id = try await verifier.verify(idToken, kind: .id)
         try Self.requireSamePrincipal(access, id)
         signedIn = true
         if access.expiresAt.timeIntervalSinceNow <= minimumValidity ||
@@ -249,7 +249,11 @@ final class AuthController: NSObject, ObservableObject, ASWebAuthenticationPrese
 
     private func validate(tokenSet: TokenSet, expectedNonce: String?) async throws -> ValidatedSession {
         let access = try await verifier.verify(tokenSet.accessToken)
-        let id = try await verifier.verify(tokenSet.idToken, expectedNonce: expectedNonce)
+        let id = try await verifier.verify(
+            tokenSet.idToken,
+            kind: .id,
+            expectedNonce: expectedNonce
+        )
         try Self.requireSamePrincipal(access, id)
         return ValidatedSession(
             accessToken: tokenSet.accessToken,

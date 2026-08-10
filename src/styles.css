@@ -5,6 +5,32 @@
   --radius-panel: 20px;
   --radius-card: 13px;
 
+  /* Shared motion scale (transitions.dev). */
+  --duration-micro: 80ms;
+  --duration-quick: 150ms;
+  --duration-fast: 250ms;
+  --duration-medium: 350ms;
+  --duration-slow: 400ms;
+  --duration-very-slow: 500ms;
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: ease-in-out;
+  --ease-out: ease-out;
+  --ease-linear: linear;
+  --ease-bounce: cubic-bezier(0.34, 1.36, 0.64, 1);
+  --ease-bounce-strong: cubic-bezier(0.34, 3.85, 0.64, 1);
+  --distance-micro: 4px;
+  --distance-small: 6px;
+  --distance-base: 8px;
+  --distance-medium: 12px;
+  --distance-large: 30px;
+  --scale-large: 0.96;
+  --scale-medium: 0.97;
+  --scale-small: 0.98;
+  --scale-tiny: 0.99;
+  --blur-small: 2px;
+  --blur-medium: 3px;
+  --blur-large: 8px;
+
   --bg: rgba(220, 224, 223, 0.95);
   --bg-solid: #dce0df;
   --card: rgba(252, 252, 250, 0.96);
@@ -14,7 +40,10 @@
   --faint: rgba(31, 35, 32, 0.065);
   --hairline: rgba(31, 35, 32, 0.11);
   --accent: #3387e8;
-  --accent-soft: rgba(51, 135, 232, 0.12);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--card));
+  --accent-pastel: color-mix(in srgb, var(--accent) 16%, var(--card));
+  --accent-pastel-hover: color-mix(in srgb, var(--accent) 22%, var(--card));
+  --accent-ring: color-mix(in srgb, var(--accent) 42%, var(--card));
   --danger: #d70015;
   --shadow-card: 0 1px 2px rgba(39, 48, 43, 0.08), 0 0 0 0.5px rgba(32, 38, 35, 0.045);
   /* Native transparent windows clip CSS shadows at their rectangular bounds. */
@@ -32,7 +61,7 @@
   --faint: rgba(255, 255, 255, 0.07);
   --hairline: rgba(255, 255, 255, 0.1);
   --accent: #61a6f4;
-  --accent-soft: rgba(97, 166, 244, 0.18);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, var(--card));
   --danger: #ff453a;
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 0 0 0.5px rgba(255, 255, 255, 0.04);
   --shadow-pop: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.06);
@@ -109,6 +138,11 @@ body {
   cursor: default;
 }
 
+::selection {
+  background: var(--accent-pastel-hover);
+  color: var(--text);
+}
+
 body.capture-feedback-surface {
   padding: 9px;
   pointer-events: none;
@@ -133,11 +167,11 @@ body.capture-feedback-surface #root {
   background: var(--card);
   box-shadow: 0 2px 6px rgba(38, 47, 42, 0.08),
     0 1px 2px rgba(38, 47, 42, 0.04);
-  animation: capture-feedback-in 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
+  animation: capture-feedback-in var(--duration-fast) var(--ease-smooth-out) both;
 }
 
 .capture-feedback.exiting {
-  animation: capture-feedback-out 180ms cubic-bezier(0.4, 0, 1, 1) both;
+  animation: capture-feedback-out var(--duration-quick) var(--ease-smooth-out) both;
 }
 
 .capture-feedback-copy {
@@ -184,27 +218,27 @@ body.capture-feedback-surface #root {
   font-size: 9.5px;
   font-variant-numeric: tabular-nums;
   opacity: 0.62;
-  animation: capture-feedback-count 180ms ease-out both;
+  animation: capture-feedback-count var(--duration-quick) var(--ease-in-out) both;
 }
 
 @keyframes capture-feedback-in {
   from {
     opacity: 0;
-    transform: translateY(-7px) scale(0.975);
+    transform: translateY(calc(0px - var(--distance-base))) scale(var(--scale-tiny));
   }
 }
 
 @keyframes capture-feedback-out {
   to {
     opacity: 0;
-    transform: translateY(-5px) scale(0.99);
+    transform: translateY(calc(0px - var(--distance-micro))) scale(var(--scale-tiny));
   }
 }
 
 @keyframes capture-feedback-count {
   from {
     opacity: 0;
-    transform: translateY(2px);
+    transform: translateY(var(--distance-micro));
   }
 }
 
@@ -227,7 +261,7 @@ button {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
 }
 
@@ -267,37 +301,21 @@ kbd {
    so a single name would only play once. Only transform/opacity, and the
    prefers-reduced-motion block below collapses it to an instant appear. */
 .panel[data-reveal="odd"] {
-  animation: panel-in-odd 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+  animation: panel-in-odd var(--duration-fast) var(--ease-smooth-out);
 }
 .panel[data-reveal="even"] {
-  animation: panel-in-even 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+  animation: panel-in-even var(--duration-fast) var(--ease-smooth-out);
 }
 @keyframes panel-in-odd {
-  0% {
+  from {
     opacity: 0;
-    transform: scale(0.94) translateY(12px);
-  }
-  60% {
-    opacity: 1;
-    transform: scale(1.012) translateY(-2px);
-  }
-  100% {
-    opacity: 1;
-    transform: none;
+    transform: scale(var(--scale-large)) translateY(var(--distance-base));
   }
 }
 @keyframes panel-in-even {
-  0% {
+  from {
     opacity: 0;
-    transform: scale(0.94) translateY(12px);
-  }
-  60% {
-    opacity: 1;
-    transform: scale(1.012) translateY(-2px);
-  }
-  100% {
-    opacity: 1;
-    transform: none;
+    transform: scale(var(--scale-large)) translateY(var(--distance-base));
   }
 }
 
@@ -321,18 +339,23 @@ kbd {
   background: var(--card);
   color: var(--muted);
   box-shadow: var(--shadow-card);
-  transition: box-shadow 160ms ease, background 160ms ease;
+  transition: box-shadow var(--duration-quick) var(--ease-smooth-out),
+    background var(--duration-quick) var(--ease-in-out);
 }
 
 .search:focus-within {
-  background: var(--card-hover);
-  box-shadow: var(--shadow-card), 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+  background: var(--accent-pastel);
+  box-shadow: var(--shadow-card), 0 0 0 1px var(--accent-ring);
 }
 
 .search input {
   flex: 1;
   min-width: 0;
   color: var(--text);
+}
+
+.search input:focus-visible {
+  outline: none;
 }
 
 .search input::placeholder {
@@ -372,7 +395,7 @@ kbd {
 }
 
 .permission-banner:hover {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: var(--accent-pastel-hover);
 }
 
 .permission-icon {
@@ -383,8 +406,8 @@ kbd {
   height: 25px;
   flex: 0 0 auto;
   border-radius: 7px;
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-pastel-hover);
+  color: var(--accent);
   font-size: 13px;
   font-weight: 600;
 }
@@ -455,7 +478,9 @@ kbd {
   border-radius: 7px;
   color: var(--muted);
   opacity: 0.66;
-  transition: opacity 150ms ease, background 150ms ease, color 150ms ease,
+  transition: opacity var(--duration-quick) var(--ease-in-out),
+    background var(--duration-quick) var(--ease-in-out),
+    color var(--duration-quick) var(--ease-in-out),
     transform 100ms ease;
 }
 
@@ -528,9 +553,10 @@ kbd {
   background: var(--card);
   border: 0.5px solid color-mix(in srgb, var(--hairline) 72%, transparent);
   box-shadow: var(--shadow-card);
-  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1),
-    opacity 150ms linear, background 160ms ease, border-color 160ms ease,
-    box-shadow 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: transform var(--duration-quick) var(--ease-smooth-out),
+    opacity var(--duration-quick) var(--ease-linear),
+    background var(--duration-quick) var(--ease-in-out),
+    border-color var(--duration-quick) var(--ease-in-out);
   position: relative;
 }
 
@@ -548,10 +574,10 @@ kbd {
 }
 
 .card.selected {
-  background: var(--card-hover);
-  border-color: color-mix(in srgb, var(--text) 24%, var(--hairline));
+  background: var(--accent-pastel);
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--hairline));
   box-shadow: var(--shadow-card),
-    0 0 0 0.5px color-mix(in srgb, var(--text) 12%, transparent);
+    0 0 0 0.5px color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
 .card.dragging-prompt {
@@ -601,7 +627,8 @@ kbd {
   letter-spacing: 0;
   text-transform: none;
   opacity: 0.72;
-  transition: color 140ms ease, opacity 140ms ease;
+  transition: color var(--duration-quick) var(--ease-in-out),
+    opacity var(--duration-quick) var(--ease-in-out);
 }
 
 .settled-clear:hover,
@@ -630,8 +657,8 @@ kbd {
 }
 
 .card.done.selected {
-  border-color: color-mix(in srgb, var(--text) 20%, var(--hairline));
-  background: var(--faint);
+  border-color: color-mix(in srgb, var(--accent) 18%, var(--hairline));
+  background: var(--accent-pastel);
   box-shadow: none;
   opacity: 1;
 }
@@ -666,34 +693,34 @@ kbd {
 .card.settling:not(.done) {
   z-index: 1;
   pointer-events: none;
-  animation: settle-depart 145ms cubic-bezier(0.4, 0, 1, 1) both;
+  animation: settle-depart var(--duration-quick) var(--ease-smooth-out) both;
 }
 
 .card.settling.done {
-  animation: settle-land 240ms cubic-bezier(0.23, 1, 0.32, 1) both;
+  animation: settle-land var(--duration-fast) var(--ease-smooth-out) both;
 }
 
 @keyframes settle-depart {
   65% {
     opacity: 0.72;
-    transform: translateY(2px) scale(0.99);
+    transform: translateY(var(--distance-micro)) scale(var(--scale-tiny));
   }
 
   to {
     opacity: 0.22;
-    transform: translateY(7px) scale(0.975);
+    transform: translateY(var(--distance-base)) scale(var(--scale-medium));
   }
 }
 
 @keyframes settle-land {
   from {
     opacity: 0.16;
-    transform: translateY(-6px) scale(0.975);
+    transform: translateY(calc(0px - var(--distance-small))) scale(var(--scale-medium));
   }
 
   70% {
     opacity: 0.78;
-    transform: translateY(1px) scale(1.004);
+    transform: translateY(1px);
   }
 
   to {
@@ -713,7 +740,9 @@ kbd {
   align-items: center;
   justify-content: center;
   color: transparent;
-  transition: all 0.12s ease;
+  transition: background var(--duration-quick) var(--ease-in-out),
+    border-color var(--duration-quick) var(--ease-in-out),
+    color var(--duration-quick) var(--ease-in-out), transform 100ms ease;
 }
 
 .card-body {
@@ -731,7 +760,8 @@ kbd {
   gap: 7px;
   overflow-x: auto;
   scrollbar-width: none;
-  transition: background 160ms ease, box-shadow 160ms ease;
+  transition: background var(--duration-quick) var(--ease-in-out),
+    box-shadow var(--duration-quick) var(--ease-smooth-out);
 }
 
 .card-attachments::-webkit-scrollbar,
@@ -748,8 +778,10 @@ kbd {
   border: 0.5px solid var(--hairline);
   border-radius: 8px;
   background: var(--faint);
-  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms ease,
-    box-shadow 160ms ease, opacity 150ms linear;
+  transition: transform var(--duration-quick) var(--ease-smooth-out),
+    border-color var(--duration-quick) var(--ease-in-out),
+    box-shadow var(--duration-quick) var(--ease-smooth-out),
+    opacity var(--duration-quick) var(--ease-linear);
 }
 
 .attachment-tile.has-preview {
@@ -779,8 +811,9 @@ button.attachment-open:hover {
 }
 
 .attachment-tile.selected {
-  border-color: color-mix(in srgb, var(--text) 34%, var(--hairline));
-  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--text) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--hairline));
+  background: var(--accent-pastel);
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .card.dragging-files .attachment-tile {
@@ -884,7 +917,8 @@ button.attachment-open[draggable="true"]:active {
   background: color-mix(in srgb, var(--text) 82%, transparent);
   color: var(--bg-solid);
   opacity: 0;
-  transition: opacity 140ms ease, transform 140ms ease;
+  transition: opacity var(--duration-quick) var(--ease-in-out),
+    transform var(--duration-quick) var(--ease-smooth-out);
 }
 
 .attachment-remove svg {
@@ -904,13 +938,13 @@ button.attachment-open[draggable="true"]:active {
 }
 
 .check:hover {
-  border-color: var(--accent);
+  border-color: var(--accent-ring);
 }
 
 .check.checked {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--accent-pastel-hover);
+  border-color: var(--accent-ring);
+  color: var(--accent);
 }
 
 .card-content {
@@ -1011,7 +1045,7 @@ button.attachment-open[draggable="true"]:active {
   border: 1.5px solid var(--hairline);
   border-top-color: var(--muted);
   border-radius: 50%;
-  animation: spin 0.7s linear infinite;
+  animation: spin 0.7s var(--ease-linear) infinite;
 }
 
 @keyframes spin {
@@ -1044,13 +1078,16 @@ button.attachment-open[draggable="true"]:active {
   box-shadow: var(--shadow-card);
   border: 1px solid color-mix(in srgb, var(--hairline) 78%, transparent);
   position: relative;
-  transition: border-color 180ms ease, box-shadow 180ms ease,
-    transform 180ms cubic-bezier(0.23, 1, 0.32, 1), background 180ms ease;
+  transition: border-color var(--duration-quick) var(--ease-in-out),
+    box-shadow var(--duration-quick) var(--ease-smooth-out),
+    transform var(--duration-quick) var(--ease-smooth-out),
+    background var(--duration-quick) var(--ease-in-out);
 }
 
 .composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--shadow-card), 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent),
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-card), 0 0 0 2px var(--accent-pastel),
     0 10px 28px rgba(36, 58, 47, 0.13);
 }
 
@@ -1093,7 +1130,8 @@ button.attachment-open[draggable="true"]:active {
   margin-top: 0;
   border-radius: 50%;
   color: var(--muted);
-  transition: background 150ms ease, color 150ms ease, transform 100ms ease;
+  transition: background var(--duration-quick) var(--ease-in-out),
+    color var(--duration-quick) var(--ease-in-out), transform 100ms ease;
 }
 
 .attach-button svg circle,
@@ -1138,7 +1176,7 @@ button.attachment-open[draggable="true"]:active {
   border: 1.5px solid var(--hairline);
   border-top-color: var(--muted);
   border-radius: 50%;
-  animation: spin 0.7s linear infinite;
+  animation: spin 0.7s var(--ease-linear) infinite;
 }
 
 .composer-attachments {
@@ -1189,7 +1227,7 @@ button.attachment-open[draggable="true"]:active {
   font-size: 12px;
   font-weight: 650;
   transform: translate(-50%, -50%);
-  animation: drop-in 140ms ease-out;
+  animation: drop-in var(--duration-quick) var(--ease-smooth-out);
 }
 
 .composer.drop-active {
@@ -1215,7 +1253,7 @@ button.attachment-open[draggable="true"]:active {
 @keyframes drop-in {
   from {
     opacity: 0;
-    transform: translate(-50%, calc(-50% + 4px)) scale(0.98);
+    transform: translate(-50%, calc(-50% + var(--distance-micro))) scale(var(--scale-small));
   }
 }
 
@@ -1231,13 +1269,14 @@ button.attachment-open[draggable="true"]:active {
   background: var(--card);
   border: 0.5px solid var(--hairline);
   box-shadow: var(--shadow-pop);
-  animation: pop 0.09s ease-out;
+  transform-origin: top left;
+  animation: menu-in var(--duration-quick) var(--ease-smooth-out);
 }
 
-@keyframes pop {
+@keyframes menu-in {
   from {
     opacity: 0;
-    transform: scale(0.97);
+    transform: scale(var(--scale-medium));
   }
 }
 
@@ -1253,14 +1292,14 @@ button.attachment-open[draggable="true"]:active {
 }
 
 .menu-item:hover:not(:disabled) {
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-pastel);
+  color: var(--text);
 }
 
 .menu-item:focus-visible:not(:disabled) {
   outline: none;
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-pastel);
+  color: var(--text);
 }
 
 .menu-label {
@@ -1276,8 +1315,9 @@ button.attachment-open[draggable="true"]:active {
   font-size: 11px;
 }
 
-.menu-item:hover:not(:disabled) .menu-kbd {
-  color: rgba(255, 255, 255, 0.75);
+.menu-item:hover:not(:disabled) .menu-kbd,
+.menu-item:focus-visible:not(:disabled) .menu-kbd {
+  color: var(--muted);
 }
 
 .menu-item:disabled {
@@ -1289,7 +1329,8 @@ button.attachment-open[draggable="true"]:active {
   color: var(--danger);
 }
 
-.menu-item.danger:hover:not(:disabled) {
+.menu-item.danger:hover:not(:disabled),
+.menu-item.danger:focus-visible:not(:disabled) {
   background: var(--danger);
   color: #fff;
 }
@@ -1317,6 +1358,7 @@ button.attachment-open[draggable="true"]:active {
   align-items: flex-start;
   justify-content: center;
   padding-top: 48px;
+  animation: overlay-in var(--duration-fast) var(--ease-in-out) both;
 }
 
 .switcher,
@@ -1327,7 +1369,40 @@ button.attachment-open[draggable="true"]:active {
   border-radius: 14px;
   background: var(--card);
   box-shadow: var(--shadow-pop);
-  animation: pop 0.1s ease-out;
+  animation: modal-in var(--duration-fast) var(--ease-smooth-out) both;
+}
+
+.overlay.is-closing {
+  pointer-events: none;
+  animation: overlay-out var(--duration-quick) var(--ease-in-out) both;
+}
+
+.overlay.is-closing .switcher,
+.overlay.is-closing .sheet,
+.overlay.is-closing .confirm-dialog {
+  animation: modal-out var(--duration-quick) var(--ease-smooth-out) both;
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+}
+
+@keyframes overlay-out {
+  to { opacity: 0; }
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(var(--scale-large));
+  }
+}
+
+@keyframes modal-out {
+  to {
+    opacity: 0;
+    transform: scale(var(--scale-large));
+  }
 }
 
 .switcher-input {
@@ -1354,7 +1429,7 @@ button.attachment-open[draggable="true"]:active {
 }
 
 .switcher-row.active {
-  background: var(--accent-soft);
+  background: var(--accent-pastel);
 }
 
 .switcher-row.create {
@@ -1477,10 +1552,10 @@ button.attachment-open[draggable="true"]:active {
 }
 
 .shortcut-recorder.recording {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--accent-ring);
+  background: var(--accent-pastel);
   color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .settings-hint {
@@ -1516,9 +1591,14 @@ button.attachment-open[draggable="true"]:active {
   min-width: 64px;
   padding: 7px 13px;
   border-radius: 8px;
-  background: var(--accent);
-  color: #fff;
+  border: 0.5px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  background: var(--accent-pastel);
+  color: var(--accent);
   font-weight: 600;
+}
+
+.settings-save:hover:not(:disabled) {
+  background: var(--accent-pastel-hover);
 }
 
 .settings-save:disabled {
@@ -1538,7 +1618,7 @@ button.attachment-open[draggable="true"]:active {
   border-radius: 14px;
   background: var(--card);
   box-shadow: var(--shadow-pop);
-  animation: pop 0.1s ease-out;
+  animation: modal-in var(--duration-fast) var(--ease-smooth-out) both;
 }
 
 .confirm-title {
@@ -1559,14 +1639,22 @@ button.attachment-open[draggable="true"]:active {
   margin-top: 16px;
 }
 
-.danger-btn {
-  background: var(--danger);
-  color: #fff;
+.confirm-btn {
+  border: 0.5px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  background: var(--accent-pastel);
+  color: var(--accent);
+  font-weight: 600;
+  transition: background var(--duration-quick) var(--ease-in-out),
+    border-color var(--duration-quick) var(--ease-in-out), transform 100ms ease;
 }
 
-.danger-btn:hover {
-  background: var(--danger);
-  filter: brightness(1.08);
+.confirm-btn:hover {
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  background: color-mix(in srgb, var(--accent) 22%, var(--card));
+}
+
+.confirm-btn:active {
+  transform: scale(0.98);
 }
 
 /* ============ toast ============ */
@@ -1587,7 +1675,7 @@ button.attachment-open[draggable="true"]:active {
   font-size: 12px;
   font-weight: 500;
   box-shadow: var(--shadow-pop);
-  animation: toast-in 0.15s ease-out;
+  animation: toast-in var(--duration-fast) var(--ease-smooth-out) both;
   max-width: 85%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1601,8 +1689,8 @@ button.attachment-open[draggable="true"]:active {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--accent);
-  color: #fff;
+  background: var(--accent-pastel-hover);
+  color: var(--accent);
   font-size: 9px;
   font-weight: 800;
 }
@@ -1611,10 +1699,21 @@ button.attachment-open[draggable="true"]:active {
   background: var(--danger);
 }
 
+.toast.exiting {
+  animation: toast-out var(--duration-quick) var(--ease-smooth-out) both;
+}
+
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translate(-50%, 6px);
+    transform: translate(-50%, var(--distance-base));
+  }
+}
+
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, var(--distance-micro));
   }
 }
 
@@ -1688,12 +1787,13 @@ button.attachment-open[draggable="true"]:active {
 }
 
 .btn.primary {
-  background: var(--accent);
-  color: #fff;
+  border: 0.5px solid color-mix(in srgb, var(--accent) 20%, transparent);
+  background: var(--accent-pastel);
+  color: var(--accent);
 }
 
 .btn.primary:hover {
-  filter: brightness(1.08);
+  background: var(--accent-pastel-hover);
 }
 
 .btn:disabled {

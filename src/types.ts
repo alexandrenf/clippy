@@ -28,6 +28,7 @@ export interface Item {
   createdAt: number;
   updatedAt: number;
   attachments: Attachment[];
+  syncConflict: boolean;
 }
 
 export type Theme = "system" | "light" | "dark" | "glass";
