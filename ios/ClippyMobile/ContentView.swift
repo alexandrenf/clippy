@@ -1,4 +1,5 @@
 import PhotosUI
+import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
@@ -22,7 +23,13 @@ struct ContentView: View {
     @State private var cameraForItem: UUID?
     @State private var showsCamera = false
     @State private var attachmentError: String?
+    @State private var preparingAttachmentID: UUID?
+    @State private var previewingAttachment: PreparedAttachment?
     @State private var showsSignOutConfirmation = false
+    @AppStorage("clippy.mobile.showCompletedItems") private var showsCompletedItems = true
+    @AppStorage("clippy.mobile.completedItemsLast") private var putsCompletedItemsLast = true
+    @AppStorage("clippy.mobile.listDensity") private var listDensityRaw = MobileListDensity.comfortable.rawValue
+    @AppStorage("clippy.mobile.hideSyncedBanner") private var hidesSyncedBanner = false
 
     var body: some View {
         NavigationStack {
@@ -37,7 +44,9 @@ struct ContentView: View {
                             statusBanner
                             accountConnectionCard
                         } else {
-                            statusBanner
+                            if showsStatusBanner {
+                                statusBanner
+                            }
                             librarySections
                         }
 
@@ -72,6 +81,25 @@ struct ContentView: View {
 
                     ToolbarItem(placement: .topBarTrailing) {
                         Menu {
+                            Section("View") {
+                                Toggle(isOn: $showsCompletedItems) {
+                                    Label("Show completed", systemImage: "checkmark.circle")
+                                }
+                                Toggle(isOn: $putsCompletedItemsLast) {
+                                    Label("Completed items last", systemImage: "arrow.down.to.line")
+                                }
+                                Picker("Row spacing", selection: $listDensityRaw) {
+                                    ForEach(MobileListDensity.allCases) { density in
+                                        Text(density.label).tag(density.rawValue)
+                                    }
+                                }
+                                Toggle(isOn: $hidesSyncedBanner) {
+                                    Label("Hide banner when synced", systemImage: "rectangle.compress.vertical")
+                                }
+                            }
+
+                            Divider()
+
                             Button("Sign out", systemImage: "rectangle.portrait.and.arrow.right") {
                                 showsSignOutConfirmation = true
                             }
@@ -98,6 +126,15 @@ struct ContentView: View {
         }
         .sheet(item: $editingItem) { item in
             itemEditor(item)
+        }
+        .sheet(item: $previewingAttachment) { attachment in
+            AttachmentPreviewSheet(attachment: attachment) {
+                model.discardAttachmentPreview(attachment)
+                previewingAttachment = nil
+            }
+            .onDisappear {
+                model.discardAttachmentPreview(attachment)
+            }
         }
         .alert("Rename list", isPresented: Binding(
             get: { renamingSection != nil },
@@ -306,8 +343,9 @@ struct ContentView: View {
 
     private var librarySections: some View {
         VStack(alignment: .leading, spacing: ClippySpace.m) {
-            if !model.library.inboxItems.isEmpty {
-                inboxCard
+            let inboxItems = displayedItems(model.library.inboxItems)
+            if !inboxItems.isEmpty {
+                inboxCard(inboxItems)
             }
 
             HStack(alignment: .firstTextBaseline) {
@@ -355,7 +393,7 @@ struct ContentView: View {
         }
     }
 
-    private var inboxCard: some View {
+    private func inboxCard(_ items: [LocalItem]) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: ClippySpace.s) {
                 Image(systemName: "tray.fill")
@@ -371,7 +409,7 @@ struct ContentView: View {
                     .font(ClippyType.subheading)
                     .foregroundStyle(ClippyPalette.text)
                 Spacer()
-                Text("\(model.library.inboxItems.count)")
+                Text("\(items.count)")
                     .font(ClippyType.captionMedium)
                     .foregroundStyle(ClippyPalette.muted)
             }
@@ -380,11 +418,11 @@ struct ContentView: View {
 
             Divider().overlay(ClippyPalette.hairline)
 
-            ForEach(Array(model.library.inboxItems.enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 itemRow(item)
                     .padding(.horizontal, ClippySpace.m)
-                    .padding(.vertical, ClippySpace.s)
-                if index < model.library.inboxItems.count - 1 {
+                    .padding(.vertical, itemRowVerticalPadding)
+                if index < items.count - 1 {
                     Divider()
                         .overlay(ClippyPalette.hairline)
                         .padding(.leading, 49)
@@ -438,16 +476,35 @@ struct ContentView: View {
 
             Divider().overlay(ClippyPalette.hairline)
 
-            let items = model.library.items(in: section.id)
+            let allItems = model.library.items(in: section.id)
+            let items = displayedItems(allItems)
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                 itemRow(item)
                     .padding(.horizontal, ClippySpace.m)
-                    .padding(.vertical, ClippySpace.s)
+                    .padding(.vertical, itemRowVerticalPadding)
                 if index < items.count - 1 {
                     Divider()
                         .overlay(ClippyPalette.hairline)
                         .padding(.leading, 49)
                 }
+            }
+
+            let hiddenCompleted = allItems.filter(\.done).count
+            if !showsCompletedItems, hiddenCompleted > 0 {
+                Button {
+                    showsCompletedItems = true
+                } label: {
+                    Label(
+                        "Show \(hiddenCompleted) completed",
+                        systemImage: "checkmark.circle"
+                    )
+                    .font(ClippyType.captionMedium)
+                    .foregroundStyle(ClippyPalette.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, ClippySpace.m)
             }
 
             HStack(spacing: ClippySpace.s) {
@@ -502,6 +559,7 @@ struct ContentView: View {
                         .strikethrough(item.done, color: ClippyPalette.muted)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .multilineTextAlignment(.leading)
+                        .lineLimit(listDensity == .compact ? 2 : nil)
                         .frame(minHeight: 44, alignment: .leading)
                 }
                 .buttonStyle(.plain)
@@ -573,21 +631,56 @@ struct ContentView: View {
             }
 
             ForEach(model.library.attachments(for: item.id)) { attachment in
-                HStack(spacing: 8) {
-                    Image(systemName: attachment.mediaType.hasPrefix("image/") ? "photo.fill" : "doc.fill")
-                        .foregroundStyle(ClippyPalette.accent)
-                    Text(attachment.name)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(ClippyPalette.muted)
-                        .lineLimit(1)
-                    Spacer()
+                HStack(spacing: ClippySpace.xs) {
+                    Button {
+                        previewAttachment(attachment)
+                    } label: {
+                        HStack(spacing: ClippySpace.s) {
+                            Image(systemName: attachment.mediaType.hasPrefix("image/") ? "photo.fill" : "doc.fill")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(ClippyPalette.accent)
+                                .frame(width: 32, height: 32)
+                                .background(
+                                    ClippyPalette.accentPastel,
+                                    in: RoundedRectangle(cornerRadius: ClippyRadius.s, style: .continuous)
+                                )
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(attachment.name)
+                                    .font(.system(size: 12.5, weight: .semibold))
+                                    .foregroundStyle(ClippyPalette.text)
+                                    .lineLimit(1)
+                                Text(attachmentDetail(attachment))
+                                    .font(ClippyType.footnote)
+                                    .foregroundStyle(ClippyPalette.muted)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer(minLength: ClippySpace.xs)
+
+                            if preparingAttachmentID == attachment.id {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(ClippyPalette.tertiary)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(preparingAttachmentID != nil)
+
                     Button("Remove", systemImage: "xmark", role: .destructive) {
                         model.deleteAttachment(id: attachment.id)
                     }
                     .labelStyle(.iconOnly)
                     .buttonStyle(.plain)
+                    .foregroundStyle(ClippyPalette.muted)
+                    .frame(width: 44, height: 44)
                 }
-                    .padding(.leading, 44)
+                .padding(.leading, 44)
             }
         }
     }
@@ -729,52 +822,109 @@ struct ContentView: View {
         itemDrafts[sectionId] = ""
     }
 
+    private var listDensity: MobileListDensity {
+        MobileListDensity(rawValue: listDensityRaw) ?? .comfortable
+    }
+
+    private var itemRowVerticalPadding: CGFloat {
+        listDensity == .compact ? ClippySpace.xs : ClippySpace.s
+    }
+
+    private var showsStatusBanner: Bool {
+        !hidesSyncedBanner || !model.isFullySynced || model.library.pendingOperationCount > 0
+    }
+
+    private func displayedItems(_ items: [LocalItem]) -> [LocalItem] {
+        let visible = showsCompletedItems ? items : items.filter { !$0.done }
+        guard putsCompletedItemsLast else { return visible }
+        return visible.enumerated()
+            .sorted { left, right in
+                if left.element.done != right.element.done {
+                    return !left.element.done
+                }
+                return left.offset < right.offset
+            }
+            .map(\.element)
+    }
+
+    private func previewAttachment(_ attachment: LocalAttachment) {
+        guard preparingAttachmentID == nil else { return }
+        preparingAttachmentID = attachment.id
+        Task {
+            defer { preparingAttachmentID = nil }
+            do {
+                previewingAttachment = try await model.prepareAttachmentPreview(id: attachment.id)
+            } catch {
+                attachmentError = attachment.mediaType.hasPrefix("image/")
+                    ? "This image is not available on this iPhone yet. Sync once more and try again."
+                    : "This attachment is not available on this iPhone yet. Sync once more and try again."
+            }
+        }
+    }
+
+    private func attachmentDetail(_ attachment: LocalAttachment) -> String {
+        let kind = attachment.mediaType.hasPrefix("image/") ? "Image" : "Attachment"
+        guard let size = attachment.size else { return "\(kind) · Tap to preview" }
+        return "\(kind) · \(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))"
+    }
+
     private var statusText: String {
-        if model.library.pendingOperationCount > 0, model.syncState != .syncing {
-            return "Ready to sync"
+        if model.isFullySynced, model.library.pendingOperationCount == 0 {
+            return "Everything is synced"
         }
         switch model.syncState {
         case .idle: return auth.signedIn ? "Connecting your account" : "Ready when you are"
         case .syncing: return "Syncing now"
-        case .synced: return "Everything is synced"
-        case .waitingForDevice: return "Waiting for your Mac"
+        case .synced: return "Checking for updates"
+        case .waitingForDevice:
+            return model.library.actorId.isEmpty ? "Waiting for your Mac" : "Sync paused"
         }
     }
 
     private var statusDetail: String {
-        if model.library.pendingOperationCount > 0, model.syncState != .syncing {
+        if model.isFullySynced, model.library.pendingOperationCount == 0 {
+            if let date = model.lastSuccessfulSyncAt {
+                return "Updated \(Self.relativeDate.localizedString(for: date, relativeTo: Date()))."
+            }
+            return "Your encrypted workspace is up to date."
+        }
+        if model.library.pendingOperationCount > 0 {
             let count = model.library.pendingOperationCount
-            return "\(count) \(count == 1 ? "change" : "changes") waiting for your Mac"
+            return "\(count) \(count == 1 ? "change" : "changes") still uploading"
         }
         switch model.syncState {
         case .idle:
             return auth.signedIn ? "Your Mac will connect automatically." : "Sign in to connect this iPhone."
         case .syncing: return "Updating your lists and files…"
-        case .synced: return "Your iPhone and Mac are up to date."
-        case .waitingForDevice: return "We’ll sync as soon as it’s available."
+        case .synced: return "Verifying the latest Convex frontier…"
+        case .waitingForDevice:
+            return model.library.actorId.isEmpty
+                ? "Keep Clippy open on another signed-in device."
+                : "We’ll retry automatically when the connection is available."
         }
     }
 
     private var statusSymbol: String {
-        if model.library.pendingOperationCount > 0, model.syncState != .syncing {
-            return "arrow.up.arrow.down"
+        if model.isFullySynced, model.library.pendingOperationCount == 0 {
+            return "checkmark"
         }
         switch model.syncState {
         case .idle: return "sparkles"
         case .syncing: return "arrow.triangle.2.circlepath"
         case .synced: return "checkmark"
-        case .waitingForDevice: return "macbook"
+        case .waitingForDevice:
+            return model.library.actorId.isEmpty ? "macbook" : "wifi.exclamationmark"
         }
     }
 
     private var statusAccent: Color {
-        if model.library.pendingOperationCount > 0, model.syncState != .syncing {
-            return ClippyPalette.accent
+        if model.isFullySynced, model.library.pendingOperationCount == 0 {
+            return ClippyPalette.success
         }
         switch model.syncState {
         case .idle, .waitingForDevice: return ClippyPalette.accent
         case .syncing: return ClippyPalette.warning
-        case .synced: return ClippyPalette.success
+        case .synced: return ClippyPalette.accent
         }
     }
 
@@ -785,6 +935,12 @@ struct ContentView: View {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter
+    }()
+
+    private static let relativeDate: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
         return formatter
     }()
 }
@@ -849,6 +1005,82 @@ private extension Color {
 
 private enum PhotoImportError: Error {
     case missingData
+}
+
+private enum MobileListDensity: String, CaseIterable, Identifiable {
+    case comfortable
+    case compact
+
+    var id: String { rawValue }
+    var label: String { self == .comfortable ? "Comfortable" : "Compact" }
+}
+
+private struct AttachmentPreviewSheet: View {
+    let attachment: PreparedAttachment
+    let onClose: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            AttachmentQuickLook(url: attachment.url)
+                .background(ClippyPalette.canvas)
+                .navigationTitle(attachment.name)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Done") {
+                            onClose()
+                            dismiss()
+                        }
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        ShareLink(item: attachment.url) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Share or open attachment")
+                    }
+                }
+        }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
+private struct AttachmentQuickLook: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(url: url)
+    }
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let controller = QLPreviewController()
+        controller.dataSource = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ controller: QLPreviewController, context: Context) {
+        guard context.coordinator.url != url else { return }
+        context.coordinator.url = url
+        controller.reloadData()
+    }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        var url: URL
+
+        init(url: URL) {
+            self.url = url
+        }
+
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+
+        func previewController(
+            _ controller: QLPreviewController,
+            previewItemAt index: Int
+        ) -> QLPreviewItem {
+            url as NSURL
+        }
+    }
 }
 
 private struct CameraCaptureView: UIViewControllerRepresentable {

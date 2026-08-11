@@ -5,6 +5,7 @@ pub mod config;
 pub mod crypto;
 pub mod files;
 pub mod model;
+mod serde_u64;
 pub mod status;
 pub mod store;
 

@@ -25,6 +25,7 @@ pub struct CloudClient {
 #[serde(rename_all = "camelCase")]
 pub struct ActorCounter {
     pub actor_id: String,
+    #[serde(deserialize_with = "super::serde_u64::deserialize")]
     pub latest_counter: u64,
 }
 
@@ -32,7 +33,9 @@ pub struct ActorCounter {
 #[serde(rename_all = "camelCase")]
 pub struct CloudBatch {
     pub actor_id: String,
+    #[serde(deserialize_with = "super::serde_u64::deserialize")]
     pub first_counter: u64,
+    #[serde(deserialize_with = "super::serde_u64::deserialize")]
     pub last_counter: u64,
     pub envelope: SealedEnvelope,
 }
@@ -40,6 +43,7 @@ pub struct CloudBatch {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PushResponse {
+    #[serde(deserialize_with = "super::serde_u64::deserialize")]
     pub accepted_through: u64,
 }
 
@@ -445,7 +449,11 @@ impl CloudClient {
             .http
             .post(endpoint)
             .bearer_auth(token)
-            .json(&serde_json::json!({ "path": name, "args": args, "format": "json" }))
+            .json(&serde_json::json!({
+                "path": name,
+                "args": [args],
+                "format": "convex_encoded_json",
+            }))
             .send()
             .await
             .and_then(reqwest::Response::error_for_status)

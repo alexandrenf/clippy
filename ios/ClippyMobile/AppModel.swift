@@ -7,6 +7,8 @@ import UIKit
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var syncState: SyncState = .idle
+    @Published private(set) var isFullySynced = false
+    @Published private(set) var lastSuccessfulSyncAt: Date?
     @Published private(set) var library: LocalSyncView = .empty
     @Published private(set) var connectingAccount = false
     @Published var message: String?
@@ -271,12 +273,60 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func syncNow() { wakeSync() }
+    func prepareAttachmentPreview(id: UUID) async throws -> PreparedAttachment {
+        guard let store, let workspaceId,
+              let attachment = library.attachments.first(where: { $0.id == id }) else {
+            throw LocalSyncStoreError.storageUnavailable
+        }
+        let key = try workspaceKey(workspaceId: workspaceId)
+        let data = try await store.reconstructAttachment(id: id, key: key)
+        let name = Self.safePreviewName(
+            attachment.name,
+            mediaType: attachment.mediaType,
+            id: attachment.id
+        )
+        return try await Task.detached(priority: .userInitiated) {
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("clippy-attachment-previews", isDirectory: true)
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            var mutableDirectory = directory
+            try? mutableDirectory.setResourceValues(values)
+            let url = directory.appendingPathComponent(name, isDirectory: false)
+            try data.write(to: url, options: [.atomic, .completeFileProtection])
+            return PreparedAttachment(
+                id: attachment.id,
+                name: attachment.name,
+                mediaType: attachment.mediaType,
+                size: UInt64(data.count),
+                url: url
+            )
+        }.value
+    }
+
+    func discardAttachmentPreview(_ attachment: PreparedAttachment) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clippy-attachment-previews", isDirectory: true)
+            .standardizedFileURL
+        let url = attachment.url.standardizedFileURL
+        guard url.deletingLastPathComponent() == directory else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    func syncNow() {
+        isFullySynced = false
+        wakeSync()
+    }
 
     func signOut() {
         auth.signOut()
         cloudAuthenticated = false
         deviceEnrollmentVerified = false
+        isFullySynced = false
         stopForegroundNetworking()
         Task { [cloud] in await cloud.signOut() }
     }
@@ -298,6 +348,7 @@ final class AppModel: ObservableObject {
             ensureCloudAuthentication()
         } else {
             stopForegroundNetworking()
+            isFullySynced = false
             syncState = workspaceId == nil ? .idle : .waitingForDevice
         }
     }
@@ -405,6 +456,7 @@ final class AppModel: ObservableObject {
     private func wakeSync() {
         guard isForeground, isOnline, store != nil, workspaceId != nil,
               cloudAuthenticated, auth.signedIn, deviceEnrollmentVerified else { return }
+        isFullySynced = false
         syncRequested = true
         guard exchangeTask == nil else { return }
         let generation = UUID()
@@ -495,10 +547,12 @@ final class AppModel: ObservableObject {
     private func performSyncOnce() async -> Bool {
         guard !exchangeInProgress else { return true }
         guard let store, let workspaceId, auth.signedIn, deviceEnrollmentVerified else {
+            isFullySynced = false
             syncState = workspaceId == nil ? .idle : .waitingForDevice
             return false
         }
         exchangeInProgress = true
+        isFullySynced = false
         syncState = .syncing
         defer { exchangeInProgress = false }
 
@@ -623,17 +677,28 @@ final class AppModel: ObservableObject {
             }
             await refreshLibrary()
             let hasMissingDownloads = !(await store.missingChunkHashes()).isEmpty
+            let refreshedFrontier = await store.frontier()
+            let remoteStillAhead = cloudCounters.contains { actor, counter in
+                counter > refreshedFrontier.counters[actor, default: 0]
+            }
             let hasMore = moreUploads ||
                 batches.count == 12 ||
                 outboundMayHaveMore ||
                 library.pendingOperationCount > 0 ||
-                hasMissingDownloads
+                hasMissingDownloads ||
+                remoteStillAhead
             syncRequested = syncRequested || hasMore
-            syncState = .synced
+            isFullySynced = !hasMore
+            syncState = hasMore ? .syncing : .synced
+            if isFullySynced {
+                lastSuccessfulSyncAt = Date()
+                message = nil
+            }
             retryIndex = 0
             return true
         } catch {
             scheduleTransientSyncRetry()
+            isFullySynced = false
             syncState = .waitingForDevice
             return false
         }
@@ -798,8 +863,10 @@ final class AppModel: ObservableObject {
             return
         }
         deviceEnrollmentVerified = true
-        syncState = .synced
+        isFullySynced = false
+        syncState = .syncing
         message = nil
+        startForegroundNetworking()
     }
 
     private func clearPendingEnrollment() throws {
@@ -815,7 +882,8 @@ final class AppModel: ObservableObject {
         self.workspaceId = workspaceId
         try await installReplica(workspaceId: workspaceId)
         deviceEnrollmentVerified = true
-        syncState = .synced
+        isFullySynced = false
+        syncState = .syncing
         message = nil
         startForegroundNetworking()
     }
@@ -973,13 +1041,42 @@ final class AppModel: ObservableObject {
             try await installReplica(workspaceId: acceptedWorkspaceId)
         }
         deviceEnrollmentVerified = true
-        syncState = .synced
+        isFullySynced = false
+        syncState = .syncing
         message = nil
         startForegroundNetworking()
+    }
+
+    private static func safePreviewName(
+        _ original: String,
+        mediaType: String,
+        id: UUID
+    ) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_. "))
+        var cleaned = String(original.unicodeScalars.map { scalar in
+            allowed.contains(scalar) ? Character(String(scalar)) : "_"
+        })
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleaned.isEmpty { cleaned = "Attachment" }
+        cleaned = String(cleaned.prefix(120))
+        if URL(fileURLWithPath: cleaned).pathExtension.isEmpty,
+           let type = UTType(mimeType: mediaType),
+           let suffix = type.preferredFilenameExtension {
+            cleaned += ".\(suffix)"
+        }
+        return "\(id.uuidString.lowercased())-\(cleaned)"
     }
 }
 
 private enum AccountEnrollmentError: Error { case invalidResponse }
+
+struct PreparedAttachment: Identifiable, Sendable {
+    let id: UUID
+    let name: String
+    let mediaType: String
+    let size: UInt64
+    let url: URL
+}
 
 extension Notification.Name {
     static let clippySyncForegrounded = Notification.Name("clippy-sync-foregrounded")

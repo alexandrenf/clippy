@@ -23,6 +23,7 @@ pub struct PairingOffer {
     pub workos_audience: String,
     pub mac_public_key: String,
     pub one_time_token: String,
+    #[serde(deserialize_with = "super::serde_u64::deserialize")]
     pub expires_at_ms: u64,
 }
 
