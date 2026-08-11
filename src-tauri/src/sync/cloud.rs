@@ -216,11 +216,17 @@ impl CloudClient {
             .subscribe("sync:coordinationSignals", args)
             .await
             .map_err(|_| CloudError::Connection)?;
+        let mut last_signal: Option<Value> = None;
 
         loop {
             tokio::select! {
                 result = subscription.next() => match result {
-                    Some(FunctionResult::Value(_)) => wake.notify_one(),
+                    Some(FunctionResult::Value(value)) => {
+                        if last_signal.as_ref() != Some(&value) {
+                            last_signal = Some(value);
+                            wake.notify_one();
+                        }
+                    },
                     Some(FunctionResult::ErrorMessage(_)
                         | FunctionResult::ConvexError(_)) => return Err(CloudError::Rejected),
                     None => return Err(CloudError::Connection),

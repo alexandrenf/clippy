@@ -204,6 +204,66 @@ import Testing
     #expect(firstView.items.first(where: { $0.id == replacement.id })?.projectedContent == "From second")
 }
 
+@Test func republishingAfterAStaleServerCounterPreservesPhoneChanges() async throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let workspace = "workspace-republish"
+    let actor = "47cde27b-9808-4f93-96ed-1d6f24535fa8"
+    let store = try LocalSyncStore(
+        workspaceId: workspace,
+        actorId: actor,
+        baseDirectory: directory
+    )
+    let section = try await store.createSection(name: "From iPhone")
+    _ = try await store.createItem(sectionId: section.id, content: "Keep this change")
+
+    try await store.republishCurrentState(after: 2)
+
+    let payload = try await store.outboundPayload()
+    #expect(payload.operations.first?.dot.counter == 3)
+    #expect(payload.operations.allSatisfy { $0.dot.actorId == actor })
+    #expect(payload.operations.contains { operation in
+        if case let .resolveContent(_, value) = operation.mutation {
+            return value == "Keep this change"
+        }
+        return false
+    })
+}
+
+@Test func deletingAnItemCascadesAttachmentsAndRemovesUnreferencedBytes() async throws {
+    let directory = temporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let key = try WorkspaceKey(data: Data(repeating: 8, count: 32))
+    let store = try LocalSyncStore(workspaceId: "workspace-delete-cascade", baseDirectory: directory)
+    let section = try await store.createSection(name: "Files")
+    let item = try await store.createItem(sectionId: section.id, content: "Delete me")
+    _ = try await store.addAttachment(
+        itemId: item.id,
+        name: "private.txt",
+        mediaType: "text/plain",
+        data: Data("private bytes".utf8),
+        key: key,
+        chunkSize: 4
+    )
+
+    try await store.deleteItem(id: item.id)
+
+    let view = await store.view()
+    #expect(view.items.isEmpty)
+    #expect(view.attachments.isEmpty)
+    let chunks = try FileManager.default
+        .subpathsOfDirectory(atPath: directory.path)
+        .filter { $0.hasSuffix(".chunk") }
+    #expect(chunks.isEmpty)
+    let payload = try await store.outboundPayload()
+    #expect(payload.operations.contains { operation in
+        operation.entityKind == "attachment" && operation.mutation == .delete
+    })
+    #expect(payload.operations.contains { operation in
+        operation.entityKind == "item" && operation.mutation == .delete
+    })
+}
+
 @Test func metadataLwwConvergesWhenOperationsArriveOutOfOrder() async throws {
     let directory = temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }

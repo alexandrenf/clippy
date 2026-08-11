@@ -252,6 +252,29 @@ public actor LocalSyncStore {
             guard state.sections[id]?.isDeleted == false else {
                 throw LocalSyncStoreError.missingEntity
             }
+            let itemIds = state.items.values
+                .filter { !$0.isDeleted && $0.sectionId == id }
+                .map(\.id)
+            let itemIdSet = Set(itemIds)
+            let attachmentIds = state.attachments.values
+                .filter { !$0.isDeleted && $0.itemId.map(itemIdSet.contains) == true }
+                .map(\.id)
+            for attachmentId in attachmentIds {
+                try Self.recordLocal(
+                    mutation: .delete,
+                    entityKind: "attachment",
+                    entityId: attachmentId.uuidString.lowercased(),
+                    state: &state
+                )
+            }
+            for itemId in itemIds {
+                try Self.recordLocal(
+                    mutation: .delete,
+                    entityKind: "item",
+                    entityId: itemId.uuidString.lowercased(),
+                    state: &state
+                )
+            }
             try Self.recordLocal(
                 mutation: .delete,
                 entityKind: "section",
@@ -259,6 +282,7 @@ public actor LocalSyncStore {
                 state: &state
             )
         }
+        try removeUnreferencedChunks()
     }
 
     @discardableResult
@@ -347,6 +371,17 @@ public actor LocalSyncStore {
             guard state.items[id]?.isDeleted == false else {
                 throw LocalSyncStoreError.missingEntity
             }
+            let attachmentIds = state.attachments.values
+                .filter { !$0.isDeleted && $0.itemId == id }
+                .map(\.id)
+            for attachmentId in attachmentIds {
+                try Self.recordLocal(
+                    mutation: .delete,
+                    entityKind: "attachment",
+                    entityId: attachmentId.uuidString.lowercased(),
+                    state: &state
+                )
+            }
             try Self.recordLocal(
                 mutation: .delete,
                 entityKind: "item",
@@ -354,6 +389,7 @@ public actor LocalSyncStore {
                 state: &state
             )
         }
+        try removeUnreferencedChunks()
     }
 
     @discardableResult
@@ -509,6 +545,150 @@ public actor LocalSyncStore {
                 state: &state
             )
         }
+        try removeUnreferencedChunks()
+    }
+
+    /// Reissues the current materialized state after the server's accepted
+    /// counter. This repairs replicas whose durable actor survived while their
+    /// local acknowledgement state did not, without trusting a counter alone
+    /// as proof that a pending operation reached Convex.
+    public func republishCurrentState(after acceptedCounter: UInt64) throws {
+        try commit { state in
+            let sections = state.sections.values.sorted { $0.id.uuidString < $1.id.uuidString }
+            let items = state.items.values.sorted { $0.id.uuidString < $1.id.uuidString }
+            let attachments = state.attachments.values.sorted { $0.id.uuidString < $1.id.uuidString }
+            let discardedOperationIds = state.pendingOperations
+                .filter { $0.dot.actorId == state.actorId && $0.dot.counter > acceptedCounter }
+                .map { Self.operationId($0.dot) }
+            state.appliedOperationIds.subtract(discardedOperationIds)
+            state.pendingOperations.removeAll(keepingCapacity: true)
+            state.counter = acceptedCounter
+            state.frontier.setCounter(acceptedCounter, for: state.actorId)
+            state.metadataDots = state.metadataDots.filter { _, dot in
+                dot.actorId != state.actorId || dot.counter <= acceptedCounter
+            }
+            for item in items where !item.isDeleted {
+                var reset = item
+                reset.content = ContentRegister()
+                state.items[item.id] = reset
+            }
+
+            for section in sections {
+                let entityId = section.id.uuidString.lowercased()
+                if section.isDeleted {
+                    try Self.recordLocal(
+                        mutation: .delete,
+                        entityKind: "section",
+                        entityId: entityId,
+                        state: &state
+                    )
+                    continue
+                }
+                try Self.recordLocal(
+                    mutation: .setMetadata(field: "name", value: .string(section.name)),
+                    entityKind: "section",
+                    entityId: entityId,
+                    state: &state
+                )
+                try Self.recordLocal(
+                    mutation: .setMetadata(field: "sortIndex", value: .number(section.sortIndex)),
+                    entityKind: "section",
+                    entityId: entityId,
+                    state: &state
+                )
+            }
+
+            for item in items {
+                let entityId = item.id.uuidString.lowercased()
+                if item.isDeleted {
+                    try Self.recordLocal(
+                        mutation: .delete,
+                        entityKind: "item",
+                        entityId: entityId,
+                        state: &state
+                    )
+                    continue
+                }
+                let sectionValue = item.sectionId
+                    .map { JSONValue.string($0.uuidString.lowercased()) } ?? .null
+                try Self.recordLocal(
+                    mutation: .setMetadata(field: "sectionId", value: sectionValue),
+                    entityKind: "item",
+                    entityId: entityId,
+                    state: &state
+                )
+                if let createdAt = item.createdAt {
+                    try Self.recordLocal(
+                        mutation: .setMetadata(field: "createdAt", value: .number(Double(createdAt))),
+                        entityKind: "item",
+                        entityId: entityId,
+                        state: &state
+                    )
+                }
+                try Self.recordLocal(
+                    mutation: .setMetadata(field: "done", value: .bool(item.done)),
+                    entityKind: "item",
+                    entityId: entityId,
+                    state: &state
+                )
+                try Self.recordLocal(
+                    mutation: .resolveContent(context: state.frontier, value: item.projectedContent),
+                    entityKind: "item",
+                    entityId: entityId,
+                    state: &state
+                )
+            }
+
+            for attachment in attachments {
+                let entityId = attachment.id.uuidString.lowercased()
+                if attachment.isDeleted {
+                    try Self.recordLocal(
+                        mutation: .delete,
+                        entityKind: "attachment",
+                        entityId: entityId,
+                        state: &state
+                    )
+                    continue
+                }
+                if let itemId = attachment.itemId {
+                    try Self.recordLocal(
+                        mutation: .setMetadata(field: "itemId", value: .string(itemId.uuidString.lowercased())),
+                        entityKind: "attachment",
+                        entityId: entityId,
+                        state: &state
+                    )
+                }
+                try Self.recordLocal(
+                    mutation: .setMetadata(field: "name", value: .string(attachment.name)),
+                    entityKind: "attachment",
+                    entityId: entityId,
+                    state: &state
+                )
+                try Self.recordLocal(
+                    mutation: .setMetadata(field: "mediaType", value: .string(attachment.mediaType)),
+                    entityKind: "attachment",
+                    entityId: entityId,
+                    state: &state
+                )
+                if let size = attachment.size {
+                    try Self.recordLocal(
+                        mutation: .setMetadata(field: "size", value: .number(Double(size))),
+                        entityKind: "attachment",
+                        entityId: entityId,
+                        state: &state
+                    )
+                }
+                if let manifest = attachment.manifest {
+                    try Self.recordLocal(
+                        mutation: .setMetadata(field: "manifest", value: Self.manifestJSON(manifest)),
+                        entityKind: "attachment",
+                        entityId: entityId,
+                        state: &state
+                    )
+                }
+            }
+        }
+        try removeUnreferencedChunks()
     }
 
     public func outboundPayload(limit: Int = 2_000) throws -> SyncPayload {
@@ -550,7 +730,11 @@ public actor LocalSyncStore {
         }
         try Self.validateNoCausalGaps(payload.operations, state: snapshot)
 
-        return try commit { state in
+        let removesEntities = payload.operations.contains { operation in
+            if case .delete = operation.mutation { return true }
+            return false
+        }
+        let result = try commit { state in
             let pendingBefore = state.pendingOperations.count
             var applied = 0
             for operation in payload.operations {
@@ -566,6 +750,8 @@ public actor LocalSyncStore {
                 acknowledgedOperationCount: pendingBefore - state.pendingOperations.count
             )
         }
+        if removesEntities { try removeUnreferencedChunks() }
+        return result
     }
 
     public func pendingChunkHashes() -> [String] {
@@ -669,6 +855,23 @@ public actor LocalSyncStore {
         } catch {
             snapshot = previous
             throw error
+        }
+    }
+
+    private func removeUnreferencedChunks() throws {
+        let referenced = Set(snapshot.attachments.values
+            .filter { !$0.isDeleted }
+            .compactMap(\.manifest)
+            .flatMap(\.chunks)
+            .map(\.sha256))
+        guard fileManager.fileExists(atPath: chunksDirectory.path) else { return }
+        for url in try fileManager.contentsOfDirectory(
+            at: chunksDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) where url.pathExtension == "chunk" {
+            guard !referenced.contains(url.deletingPathExtension().lastPathComponent) else { continue }
+            try fileManager.removeItem(at: url)
         }
     }
 
@@ -936,29 +1139,31 @@ public actor LocalSyncStore {
         if let existing = state.metadataDots[clockKey], existing >= dot { return }
         switch entityKind {
         case "section":
-            var record = state.sections[id] ?? LocalSection(
+            state.sections[id] = LocalSection(
                 id: id,
-                name: "Untitled",
+                name: "",
                 sortIndex: 0,
-                isDeleted: false
+                isDeleted: true
             )
-            record.isDeleted = true
-            state.sections[id] = record
         case "item":
-            var record = state.items[id] ?? LocalItem(
+            state.items[id] = LocalItem(
                 id: id,
                 sectionId: nil,
                 createdAt: nil,
                 content: ContentRegister(),
                 done: false,
-                isDeleted: false
+                isDeleted: true
             )
-            record.isDeleted = true
-            state.items[id] = record
         case "attachment":
-            var record = state.attachments[id] ?? placeholderAttachment(id: id)
-            record.isDeleted = true
-            state.attachments[id] = record
+            state.attachments[id] = LocalAttachment(
+                id: id,
+                itemId: nil,
+                name: "",
+                mediaType: "application/octet-stream",
+                size: nil,
+                manifest: nil,
+                isDeleted: true
+            )
         default:
             throw LocalSyncStoreError.unsupportedEntity
         }

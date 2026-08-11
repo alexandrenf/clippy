@@ -23,6 +23,8 @@ final class AppModel: ObservableObject {
     private var cloudAuthenticated = false
     private var deviceEnrollmentVerified = false
     private var cloudCounters: [String: UInt64] = [:]
+    private var hasReceivedCoordinationSignals = false
+    private var pendingEnrollmentSignal: String?
     private var cloudAuthenticationTask: Task<Void, Never>?
     private var cloudAuthenticationRetryTask: Task<Void, Never>?
     private var transientSyncRetryTask: Task<Void, Never>?
@@ -497,16 +499,27 @@ final class AppModel: ObservableObject {
                     receiveCompletion: { [weak self] completion in
                         guard let self else { return }
                         self.changesSubscription = nil
+                        self.hasReceivedCoordinationSignals = false
+                        self.pendingEnrollmentSignal = nil
                         if case .failure = completion { self.scheduleTransientSyncRetry() }
                     },
                     receiveValue: { [weak self] signals in
                         guard let self else { return }
-                        self.cloudCounters = Dictionary(uniqueKeysWithValues: signals.counters.compactMap {
-                            guard $0.latestCounter >= 0,
-                                  $0.latestCounter <= 9_007_199_254_740_991,
-                                  $0.latestCounter.rounded() == $0.latestCounter else { return nil }
-                            return ($0.actorId, UInt64($0.latestCounter))
-                        })
+                        let counters: [String: UInt64] = Dictionary(
+                            uniqueKeysWithValues: signals.counters.compactMap {
+                                guard $0.latestCounter >= 0,
+                                      $0.latestCounter <= 9_007_199_254_740_991,
+                                      $0.latestCounter.rounded() == $0.latestCounter else { return nil }
+                                return ($0.actorId, UInt64($0.latestCounter))
+                            }
+                        )
+                        let shouldWake = !self.hasReceivedCoordinationSignals ||
+                            counters != self.cloudCounters ||
+                            signals.pendingEnrollmentId != self.pendingEnrollmentSignal
+                        self.hasReceivedCoordinationSignals = true
+                        self.pendingEnrollmentSignal = signals.pendingEnrollmentId
+                        self.cloudCounters = counters
+                        guard shouldWake else { return }
                         self.wakeSync()
                     }
                 )
@@ -526,6 +539,8 @@ final class AppModel: ObservableObject {
 
     private func stopForegroundNetworking() {
         syncRequested = false
+        hasReceivedCoordinationSignals = false
+        pendingEnrollmentSignal = nil
         exchangeGeneration = UUID()
         safetyPollTask?.cancel()
         safetyPollTask = nil
@@ -572,19 +587,21 @@ final class AppModel: ObservableObject {
                 return true
             }
 
+            // A server counter is only a hint. It cannot acknowledge the
+            // current local payload by itself because an app reinstall may
+            // retain the actor identity while losing its local replica.
+            guard hasReceivedCoordinationSignals else { return false }
             let actorId = library.actorId
-            if let accepted = cloudCounters[actorId], accepted > 0 {
-                _ = try await store.applyRemotePayload(
-                    SyncPayload(
-                        workspaceId: workspaceId,
-                        frontier: VersionVector([actorId: accepted]),
-                        operations: []
-                    )
-                )
-            }
+            let acceptedAtStart = cloudCounters[actorId, default: 0]
 
             var limit = 256
             var outbound = try await store.outboundPayload(limit: limit)
+            if let firstCounter = outbound.operations.first?.dot.counter,
+               firstCounter <= acceptedAtStart {
+                try await store.republishCurrentState(after: acceptedAtStart)
+                await refreshLibrary()
+                outbound = try await store.outboundPayload(limit: limit)
+            }
             var outboundMayHaveMore = false
             while !outbound.operations.isEmpty {
                 let encoded = try JSONEncoder().encode(outbound)
@@ -680,6 +697,22 @@ final class AppModel: ObservableObject {
             let refreshedFrontier = await store.frontier()
             let remoteStillAhead = cloudCounters.contains { actor, counter in
                 counter > refreshedFrontier.counters[actor, default: 0]
+            }
+            let repairKey = replicaAcknowledgementRepairKey(workspaceId: workspaceId)
+            if !UserDefaults.standard.bool(forKey: repairKey),
+               acceptedAtStart > 0,
+               !hasMissingDownloads,
+               !remoteStillAhead {
+                try await store.republishCurrentState(
+                    after: cloudCounters[actorId, default: acceptedAtStart]
+                )
+                UserDefaults.standard.set(true, forKey: repairKey)
+                await refreshLibrary()
+                syncRequested = true
+                return true
+            }
+            if acceptedAtStart == 0 {
+                UserDefaults.standard.set(true, forKey: repairKey)
             }
             let hasMore = moreUploads ||
                 batches.count == 12 ||
@@ -1065,6 +1098,10 @@ final class AppModel: ObservableObject {
             cleaned += ".\(suffix)"
         }
         return "\(id.uuidString.lowercased())-\(cleaned)"
+    }
+
+    private func replicaAcknowledgementRepairKey(workspaceId: String) -> String {
+        "clippy.sync.acknowledgement-v2.\(configuration.environment.rawValue).\(workspaceId)"
     }
 }
 

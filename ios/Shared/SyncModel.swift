@@ -35,6 +35,14 @@ public struct VersionVector: Codable, Equatable, Sendable {
         }
     }
 
+    mutating func setCounter(_ counter: UInt64, for actor: String) {
+        if counter == 0 {
+            counters.removeValue(forKey: actor)
+        } else {
+            counters[actor] = counter
+        }
+    }
+
     public init(from decoder: Decoder) throws {
         counters = try [String: UInt64](from: decoder)
     }

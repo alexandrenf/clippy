@@ -96,11 +96,10 @@ export const bootstrap = mutation({
       device = await ctx.db.get(id);
     } else if (device.ownerId !== identity.tokenIdentifier) {
       throw new ConvexError("Device is owned by another account");
-    } else {
+    } else if (device.name !== args.deviceName || device.platform !== args.platform) {
       await ctx.db.patch(device._id, {
         name: args.deviceName,
         platform: args.platform,
-        lastSeenAt: Date.now(),
       });
     }
     return { workspaceId: args.workspaceId, actorId: args.actorId };
@@ -478,11 +477,13 @@ export const acceptEnrollment = mutation({
       device = await ctx.db.get(id);
     }
     await ctx.db.patch(enrollment._id, { status: "accepted" });
-    await ctx.db.patch(device!._id, {
-      name: enrollment.deviceName,
-      platform: enrollment.platform ?? device!.platform,
-      lastSeenAt: Date.now(),
-    });
+    const platform = enrollment.platform ?? device!.platform;
+    if (device!.name !== enrollment.deviceName || device!.platform !== platform) {
+      await ctx.db.patch(device!._id, {
+        name: enrollment.deviceName,
+        platform,
+      });
+    }
     return { workspaceId: enrollment.workspaceId, actorId: device!.actorId };
   },
 });
