@@ -7,6 +7,11 @@ public struct CloudActorCounter: Equatable, Decodable {
     @ConvexFloat public var latestCounter: Double
 }
 
+public struct CloudCoordinationSignals: Decodable {
+    public let counters: [CloudActorCounter]
+    public let pendingEnrollmentId: String?
+}
+
 public struct CloudBatch: Sendable {
     public let actorId: String
     public let firstCounter: UInt64
@@ -42,6 +47,20 @@ public struct EnrollmentStatus: Sendable {
     public let state: String
     public let workspaceId: String?
     public let response: AccountEnrollmentResponse?
+}
+
+public enum AccountWorkspaceRoutingDecision: Equatable, Sendable {
+    case keepLocalWorkspace
+    case enroll
+    case resetAndEnroll
+
+    public static func resolve(
+        localWorkspaceId: String?,
+        accountWorkspaceId: String?
+    ) -> Self {
+        guard let localWorkspaceId else { return .enroll }
+        return localWorkspaceId == accountWorkspaceId ? .keepLocalWorkspace : .resetAndEnroll
+    }
 }
 
 private final class WorkOSTokenProvider: AuthProvider, @unchecked Sendable {
@@ -104,6 +123,41 @@ public final class ConvexSyncClient {
             with: ["workspaceId": workspaceId, "actorId": actorId],
             yielding: [CloudActorCounter].self
         )
+    }
+
+    public func coordinationSignals(
+        workspaceId: String,
+        actorId: String
+    ) -> AnyPublisher<CloudCoordinationSignals, ClientError> {
+        client.subscribe(
+            to: "sync:coordinationSignals",
+            with: ["workspaceId": workspaceId, "actorId": actorId],
+            yielding: CloudCoordinationSignals.self
+        )
+    }
+
+    public func bootstrapWorkspace(
+        workspaceId: String,
+        actorId: String,
+        deviceName: String
+    ) async throws {
+        let _: BootstrapWire = try await client.mutation(
+            "sync:bootstrap",
+            with: [
+                "workspaceId": workspaceId,
+                "actorId": actorId,
+                "deviceName": deviceName,
+                "platform": "ios",
+            ]
+        )
+    }
+
+    public func accountWorkspace() async throws -> String? {
+        let response: AccountWorkspaceWire? = try await queryOnce(
+            "sync:accountWorkspace",
+            with: [:]
+        )
+        return response?.workspaceId
     }
 
     public func isDeviceEnrolled(workspaceId: String, actorId: String) async throws -> Bool {
@@ -192,7 +246,8 @@ public final class ConvexSyncClient {
         enrollmentId: String,
         actorId: String,
         deviceName: String,
-        phonePublicKey: String
+        phonePublicKey: String,
+        recoverKey: Bool = false
     ) async throws -> EnrollmentRequestResult {
         try await client.mutation(
             "sync:requestEnrollment",
@@ -201,6 +256,36 @@ public final class ConvexSyncClient {
                 "actorId": actorId,
                 "deviceName": deviceName,
                 "phonePublicKey": phonePublicKey,
+                "platform": "ios",
+                "recoverKey": recoverKey,
+            ]
+        )
+    }
+
+    public func pendingEnrollments(
+        workspaceId: String,
+        actorId: String
+    ) async throws -> [PendingCloudEnrollment] {
+        try await queryOnce(
+            "sync:pendingEnrollments",
+            with: ["workspaceId": workspaceId, "actorId": actorId]
+        )
+    }
+
+    public func grantEnrollment(
+        workspaceId: String,
+        actorId: String,
+        enrollmentId: String,
+        response: AccountEnrollmentResponse
+    ) async throws {
+        let _: GrantWire = try await client.mutation(
+            "sync:grantEnrollment",
+            with: [
+                "workspaceId": workspaceId,
+                "actorId": actorId,
+                "enrollmentId": enrollmentId,
+                "offer": offerArgs(response.offer),
+                "grant": grantArgs(response.grant),
             ]
         )
     }
@@ -249,7 +334,14 @@ private struct PushWire: Decodable {
     @ConvexFloat var acceptedThrough: Double
 }
 
+private struct BootstrapWire: Decodable {
+    let workspaceId: String
+    let actorId: String
+}
+
+private struct AccountWorkspaceWire: Decodable { let workspaceId: String }
 private struct DeviceRegistrationWire: Decodable { let enrolled: Bool }
+private struct GrantWire: Decodable { let granted: Bool }
 
 private struct CloudBatchWire: Decodable {
     let actorId: String
@@ -314,6 +406,27 @@ private struct EnrollmentStatusWire: Decodable {
 }
 
 private struct AcceptWire: Decodable { let workspaceId: String }
+
+private func offerArgs(_ offer: PairingOffer) -> [String: ConvexEncodable?] {
+    [
+        "version": Double(offer.version),
+        "workspaceId": offer.workspaceId,
+        "syncUrl": offer.syncUrl,
+        "workosIssuer": offer.workosIssuer,
+        "workosAudience": offer.workosAudience,
+        "macPublicKey": offer.macPublicKey,
+        "oneTimeToken": offer.oneTimeToken,
+        "expiresAtMs": Double(offer.expiresAtMs),
+    ]
+}
+
+private func grantArgs(_ grant: PairingGrant) -> [String: ConvexEncodable?] {
+    [
+        "macPublicKey": grant.macPublicKey,
+        "phonePublicKey": grant.phonePublicKey,
+        "sealedWorkspace": envelopeArgs(grant.sealedWorkspace),
+    ]
+}
 
 private func envelopeArgs(_ envelope: SealedEnvelope) -> [String: ConvexEncodable?] {
     [

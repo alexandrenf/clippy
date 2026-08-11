@@ -52,6 +52,39 @@ pub struct PendingEnrollment {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AccountWorkspace {
+    pub workspace_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceRegistration {
+    pub enrolled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrollmentRequestResult {
+    pub state: String,
+    pub workspace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnrollmentStatus {
+    pub state: String,
+    pub workspace_id: Option<String>,
+    pub offer: Option<PairingOffer>,
+    pub grant: Option<PairingGrant>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcceptedEnrollment {
+    pub workspace_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StorageUpload {
     pub hash: String,
     pub exists: bool,
@@ -103,6 +136,25 @@ impl CloudClient {
             )
             .await?;
         Ok(())
+    }
+
+    pub async fn account_workspace(&self) -> Result<Option<AccountWorkspace>, CloudError> {
+        self.query("sync:accountWorkspace", serde_json::json!({}))
+            .await
+    }
+
+    pub async fn is_device_enrolled(
+        &self,
+        workspace_id: &str,
+        actor_id: &str,
+    ) -> Result<bool, CloudError> {
+        let response: DeviceRegistration = self
+            .query(
+                "sync:deviceRegistration",
+                serde_json::json!({ "workspaceId": workspace_id, "actorId": actor_id }),
+            )
+            .await?;
+        Ok(response.enrolled)
     }
 
     pub async fn changes(
@@ -228,6 +280,52 @@ impl CloudClient {
         self.query(
             "sync:pendingEnrollments",
             serde_json::json!({ "workspaceId": workspace_id, "actorId": actor_id }),
+        )
+        .await
+    }
+
+    pub async fn request_enrollment(
+        &self,
+        enrollment_id: &str,
+        actor_id: &str,
+        device_name: &str,
+        public_key: &str,
+        recover_key: bool,
+    ) -> Result<EnrollmentRequestResult, CloudError> {
+        self.mutation(
+            "sync:requestEnrollment",
+            serde_json::json!({
+                "enrollmentId": enrollment_id,
+                "actorId": actor_id,
+                "deviceName": device_name,
+                "phonePublicKey": public_key,
+                "platform": "macos",
+                "recoverKey": recover_key,
+            }),
+        )
+        .await
+    }
+
+    pub async fn enrollment_status(
+        &self,
+        enrollment_id: &str,
+        actor_id: &str,
+    ) -> Result<Option<EnrollmentStatus>, CloudError> {
+        self.query(
+            "sync:enrollmentStatus",
+            serde_json::json!({ "enrollmentId": enrollment_id, "actorId": actor_id }),
+        )
+        .await
+    }
+
+    pub async fn accept_enrollment(
+        &self,
+        enrollment_id: &str,
+        actor_id: &str,
+    ) -> Result<AcceptedEnrollment, CloudError> {
+        self.mutation(
+            "sync:acceptEnrollment",
+            serde_json::json!({ "enrollmentId": enrollment_id, "actorId": actor_id }),
         )
         .await
     }

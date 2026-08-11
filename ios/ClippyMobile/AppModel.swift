@@ -19,6 +19,7 @@ final class AppModel: ObservableObject {
     private var workspaceId: String?
     private var store: LocalSyncStore?
     private var cloudAuthenticated = false
+    private var deviceEnrollmentVerified = false
     private var cloudCounters: [String: UInt64] = [:]
     private var cloudAuthenticationTask: Task<Void, Never>?
     private var cloudAuthenticationRetryTask: Task<Void, Never>?
@@ -38,7 +39,6 @@ final class AppModel: ObservableObject {
     private var authenticationRetryIndex = 0
     private var exchangeGeneration = UUID()
     private var confirmedRemoteChunks: Set<String> = []
-    private var needsAccountEnrollment = false
 
     init(configuration: RuntimeConfiguration) {
         self.configuration = configuration
@@ -75,6 +75,7 @@ final class AppModel: ObservableObject {
                         self?.ensureCloudAuthentication()
                     } else {
                         self?.cloudAuthenticated = false
+                        self?.deviceEnrollmentVerified = false
                         self?.stopForegroundNetworking()
                     }
                 }
@@ -275,6 +276,7 @@ final class AppModel: ObservableObject {
     func signOut() {
         auth.signOut()
         cloudAuthenticated = false
+        deviceEnrollmentVerified = false
         stopForegroundNetworking()
         Task { [cloud] in await cloud.signOut() }
     }
@@ -304,6 +306,8 @@ final class AppModel: ObservableObject {
         do {
             try await installReplica(workspaceId: workspaceId)
             ensureCloudAuthentication()
+        } catch is CancellationError {
+            return
         } catch {
             syncState = .waitingForDevice
             message = "Local sync data could not be opened."
@@ -315,10 +319,12 @@ final class AppModel: ObservableObject {
         let replica = try await Task.detached(priority: .userInitiated) {
             try LocalSyncStore(workspaceId: workspaceId, actorId: actorId)
         }.value
+        let view = await replica.view()
+        guard self.workspaceId == workspaceId else { throw CancellationError() }
         confirmedRemoteChunks.removeAll(keepingCapacity: true)
         store = replica
-        library = await replica.view()
-        deviceActorId = library.actorId
+        library = view
+        deviceActorId = view.actorId
         try? keychain.save(
             Data(deviceActorId.utf8),
             account: configuration.keychainAccount("device-actor")
@@ -344,6 +350,8 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             do {
                 try await cloud.authenticate()
+                let accountWorkspaceId = try await cloud.accountWorkspace()
+                try await reconcileAccountWorkspace(accountWorkspaceId)
                 try Task.checkCancellation()
                 guard auth.signedIn, isForeground, isOnline else {
                     cloudAuthenticationTask = nil
@@ -353,12 +361,11 @@ final class AppModel: ObservableObject {
                 authenticationRetryIndex = 0
                 do {
                     let resumed = try await resumePendingEnrollmentAcceptance()
-                    if !resumed, let workspaceId {
-                        let enrolled = try await cloud.isDeviceEnrolled(
+                    if !resumed, !deviceEnrollmentVerified, let workspaceId {
+                        deviceEnrollmentVerified = try await cloud.isDeviceEnrolled(
                             workspaceId: workspaceId,
                             actorId: deviceActorId
                         )
-                        needsAccountEnrollment = !enrolled
                     }
                 } catch {
                     message = "Waiting to finish secure account enrollment."
@@ -397,7 +404,7 @@ final class AppModel: ObservableObject {
     /// mutation or cancelling an ambiguous upload.
     private func wakeSync() {
         guard isForeground, isOnline, store != nil, workspaceId != nil,
-              cloudAuthenticated, auth.signedIn else { return }
+              cloudAuthenticated, auth.signedIn, deviceEnrollmentVerified else { return }
         syncRequested = true
         guard exchangeTask == nil else { return }
         let generation = UUID()
@@ -421,7 +428,7 @@ final class AppModel: ObservableObject {
 
     private func startForegroundNetworking() {
         guard isForeground, isOnline, auth.signedIn, cloudAuthenticated else { return }
-        if needsAccountEnrollment {
+        guard deviceEnrollmentVerified else {
             beginAutomaticAccountEnrollment()
             return
         }
@@ -432,7 +439,7 @@ final class AppModel: ObservableObject {
         if changesSubscription == nil {
             let actorId = library.actorId
             changesSubscription = cloud
-                .changes(workspaceId: workspaceId, actorId: actorId)
+                .coordinationSignals(workspaceId: workspaceId, actorId: actorId)
                 .receive(on: RunLoop.main)
                 .sink(
                     receiveCompletion: { [weak self] completion in
@@ -440,9 +447,9 @@ final class AppModel: ObservableObject {
                         self.changesSubscription = nil
                         if case .failure = completion { self.scheduleTransientSyncRetry() }
                     },
-                    receiveValue: { [weak self] counters in
+                    receiveValue: { [weak self] signals in
                         guard let self else { return }
-                        self.cloudCounters = Dictionary(uniqueKeysWithValues: counters.compactMap {
+                        self.cloudCounters = Dictionary(uniqueKeysWithValues: signals.counters.compactMap {
                             guard $0.latestCounter >= 0,
                                   $0.latestCounter <= 9_007_199_254_740_991,
                                   $0.latestCounter.rounded() == $0.latestCounter else { return nil }
@@ -487,7 +494,7 @@ final class AppModel: ObservableObject {
 
     private func performSyncOnce() async -> Bool {
         guard !exchangeInProgress else { return true }
-        guard let store, let workspaceId, auth.signedIn else {
+        guard let store, let workspaceId, auth.signedIn, deviceEnrollmentVerified else {
             syncState = workspaceId == nil ? .idle : .waitingForDevice
             return false
         }
@@ -497,6 +504,11 @@ final class AppModel: ObservableObject {
 
         do {
             let key = try workspaceKey(workspaceId: workspaceId)
+            try await grantPendingEnrollments(
+                workspaceId: workspaceId,
+                actorId: library.actorId,
+                key: key
+            )
 
             // R2 objects are uploaded before the operation containing their
             // manifest. Confirmed hashes are memoized for this foreground run.
@@ -637,7 +649,47 @@ final class AppModel: ObservableObject {
             catch { return }
             guard let self, self.isOnline, self.isForeground else { return }
             self.transientSyncRetryTask = nil
-            self.wakeSync()
+            self.startForegroundNetworking()
+        }
+    }
+
+    private func grantPendingEnrollments(
+        workspaceId: String,
+        actorId: String,
+        key: WorkspaceKey
+    ) async throws {
+        let requests = try await cloud.pendingEnrollments(
+            workspaceId: workspaceId,
+            actorId: actorId
+        )
+        guard !requests.isEmpty else { return }
+        let principal = try await auth.principal()
+        let now = UInt64(Date().timeIntervalSince1970 * 1_000)
+        for request in requests where request.actorId != actorId {
+            guard request.expiresAt >= Double(now),
+                  request.expiresAt <= 9_007_199_254_740_991,
+                  request.expiresAt.rounded() == request.expiresAt else { continue }
+            let expiresAt = min(UInt64(request.expiresAt), now + 10 * 60 * 1_000)
+            let response = try SyncCrypto.grantAccountEnrollment(
+                request: AccountEnrollmentRequest(phonePublicKey: request.phonePublicKey),
+                workspaceId: workspaceId,
+                syncURL: configuration.convexURL.absoluteString.trimmingCharacters(
+                    in: CharacterSet(charactersIn: "/")
+                ),
+                workOSIssuer: configuration.workOSIssuer.absoluteString.trimmingCharacters(
+                    in: CharacterSet(charactersIn: "/")
+                ),
+                workOSAudience: configuration.workOSAudience,
+                workspaceKey: key,
+                principal: principal,
+                expiresAtMs: expiresAt
+            )
+            try await cloud.grantEnrollment(
+                workspaceId: workspaceId,
+                actorId: actorId,
+                enrollmentId: request.enrollmentId,
+                response: response
+            )
         }
     }
 
@@ -678,6 +730,96 @@ final class AppModel: ObservableObject {
         return try WorkspaceKey(data: data)
     }
 
+    private func reconcileAccountWorkspace(_ accountWorkspaceId: String?) async throws {
+        switch AccountWorkspaceRoutingDecision.resolve(
+            localWorkspaceId: workspaceId,
+            accountWorkspaceId: accountWorkspaceId
+        ) {
+        case .keepLocalWorkspace:
+            guard store == nil, let workspaceId else { return }
+            let acceptancePending = try keychain.load(
+                account: configuration.keychainAccount("pending-enrollment-id")
+            ) != nil
+            if !acceptancePending {
+                try await installReplica(workspaceId: workspaceId)
+            }
+        case .enroll:
+            if accountWorkspaceId == nil {
+                try await bootstrapAccountWorkspace()
+            }
+        case .resetAndEnroll:
+            try clearActiveWorkspaceRoute()
+            if accountWorkspaceId == nil {
+                try await bootstrapAccountWorkspace()
+            }
+        }
+    }
+
+    private func clearActiveWorkspaceRoute() throws {
+        try keychain.delete(account: configuration.keychainAccount("workspace-id"))
+        try keychain.delete(account: configuration.keychainAccount("pending-enrollment-id"))
+        deviceEnrollmentVerified = false
+        workspaceId = nil
+        store = nil
+        library = .empty
+        cloudCounters.removeAll(keepingCapacity: true)
+        confirmedRemoteChunks.removeAll(keepingCapacity: true)
+        syncState = .idle
+        message = nil
+    }
+
+    private func bootstrapAccountWorkspace() async throws {
+        let candidate = UUID().uuidString.lowercased()
+        let key = WorkspaceKey.random()
+        try keychain.save(
+            key.data,
+            account: configuration.keychainAccount("workspace-key:\(candidate)")
+        )
+        try keychain.save(
+            Data(candidate.utf8),
+            account: configuration.keychainAccount("workspace-id")
+        )
+        workspaceId = candidate
+        try await installReplica(workspaceId: candidate)
+        do {
+            try await cloud.bootstrapWorkspace(
+                workspaceId: candidate,
+                actorId: deviceActorId,
+                deviceName: "Clippy on this iPhone"
+            )
+        } catch {
+            let authoritative = try await cloud.accountWorkspace()
+            guard authoritative != candidate else {
+                deviceEnrollmentVerified = true
+                return
+            }
+            try clearActiveWorkspaceRoute()
+            guard authoritative != nil else { throw error }
+            return
+        }
+        deviceEnrollmentVerified = true
+        syncState = .synced
+        message = nil
+    }
+
+    private func clearPendingEnrollment() throws {
+        try keychain.delete(account: configuration.keychainAccount("pending-enrollment-id"))
+    }
+
+    private func restoreAlreadyEnrolledWorkspace(_ workspaceId: String) async throws {
+        _ = try workspaceKey(workspaceId: workspaceId)
+        try keychain.save(
+            Data(workspaceId.utf8),
+            account: configuration.keychainAccount("workspace-id")
+        )
+        self.workspaceId = workspaceId
+        try await installReplica(workspaceId: workspaceId)
+        deviceEnrollmentVerified = true
+        syncState = .synced
+        message = nil
+        startForegroundNetworking()
+    }
+
     private func beginAutomaticAccountEnrollment() {
         guard accountEnrollmentTask == nil else { return }
         connectingAccount = true
@@ -685,7 +827,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             var retryDelay: TimeInterval = 0
             while !Task.isCancelled, self.isForeground, self.isOnline, self.auth.signedIn,
-                  (self.needsAccountEnrollment || self.workspaceId == nil || self.store == nil) {
+                  (!self.deviceEnrollmentVerified || self.workspaceId == nil || self.store == nil) {
                 if retryDelay > 0 {
                     do { try await Task.sleep(for: .seconds(retryDelay)) }
                     catch { break }
@@ -693,12 +835,11 @@ final class AppModel: ObservableObject {
                 do {
                     try await self.enrollSignedInAccount()
                     break
-                } catch AccountEnrollmentError.noEnvironment {
-                    self.syncState = .waitingForDevice
-                    self.message = "Open Clippy on your Mac and sign in there. This iPhone will connect automatically."
+                } catch is CancellationError {
+                    break
                 } catch {
                     self.syncState = .waitingForDevice
-                    self.message = "Waiting for secure account enrollment."
+                    self.message = "Waiting for another signed-in Clippy device to share the encrypted workspace."
                 }
                 retryDelay = retryDelay == 0 ? 1 : min(retryDelay * 2, 30)
             }
@@ -712,17 +853,29 @@ final class AppModel: ObservableObject {
         syncState = .syncing
         let enrollment = SyncCrypto.AccountEnrollment()
         let enrollmentId = UUID().uuidString.lowercased()
+        let recoverKey: Bool
+        if let workspaceId {
+            recoverKey = (try? workspaceKey(workspaceId: workspaceId)) == nil
+        } else {
+            recoverKey = false
+        }
         let requested = try await cloud.requestEnrollment(
             enrollmentId: enrollmentId,
             actorId: deviceActorId,
             deviceName: "Clippy on this iPhone",
-            phonePublicKey: enrollment.request.phonePublicKey
+            phonePublicKey: enrollment.request.phonePublicKey,
+            recoverKey: recoverKey
         )
-        guard requested.state != "noWorkspace" else {
-            throw AccountEnrollmentError.noEnvironment
+        if requested.state == "noWorkspace" {
+            try await bootstrapAccountWorkspace()
+            return
         }
-        guard requested.state != "alreadyEnrolled" else {
-            throw AccountEnrollmentError.invalidResponse
+        if requested.state == "alreadyEnrolled" {
+            guard let workspaceId = requested.workspaceId else {
+                throw AccountEnrollmentError.invalidResponse
+            }
+            try await restoreAlreadyEnrolledWorkspace(workspaceId)
+            return
         }
 
         var response: AccountEnrollmentResponse?
@@ -743,10 +896,15 @@ final class AppModel: ObservableObject {
         guard let response else { throw CancellationError() }
         let offer = response.offer
         guard offer.workspaceId == requested.workspaceId,
-              offer.workosIssuer == configuration.workOSIssuer.absoluteString,
+              offer.workosIssuer.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
+                configuration.workOSIssuer.absoluteString.trimmingCharacters(
+                    in: CharacterSet(charactersIn: "/")
+                ),
               offer.workosAudience == configuration.workOSAudience,
               offer.syncUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
-                configuration.convexURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+                configuration.convexURL.absoluteString.trimmingCharacters(
+                    in: CharacterSet(charactersIn: "/")
+                ),
               UInt64(Date().timeIntervalSince1970 * 1_000) <= offer.expiresAtMs else {
             throw AccountEnrollmentError.invalidResponse
         }
@@ -775,11 +933,22 @@ final class AppModel: ObservableObject {
     private func resumePendingEnrollmentAcceptance() async throws -> Bool {
         guard let enrollmentData = try keychain.load(
             account: configuration.keychainAccount("pending-enrollment-id")
-        ), let enrollmentId = String(data: enrollmentData, encoding: .utf8),
-           let workspaceData = try keychain.load(
-            account: configuration.keychainAccount("workspace-id")
-           ), let workspace = String(data: workspaceData, encoding: .utf8),
-           UUID(uuidString: enrollmentId) != nil, UUID(uuidString: workspace) != nil else {
+        ) else { return false }
+        guard let enrollmentId = String(data: enrollmentData, encoding: .utf8),
+              UUID(uuidString: enrollmentId) != nil,
+              let workspaceData = try keychain.load(
+                account: configuration.keychainAccount("workspace-id")
+              ), let workspace = String(data: workspaceData, encoding: .utf8),
+              UUID(uuidString: workspace) != nil else {
+            try clearPendingEnrollment()
+            return false
+        }
+        guard let status = try await cloud.enrollmentStatus(
+            enrollmentId: enrollmentId,
+            actorId: deviceActorId
+        ), status.state == "granted" || status.state == "accepted",
+           status.workspaceId == workspace else {
+            try clearPendingEnrollment()
             return false
         }
         try await finishEnrollmentAcceptance(enrollmentId: enrollmentId, workspaceId: workspace)
@@ -797,19 +966,20 @@ final class AppModel: ObservableObject {
         guard acceptedWorkspace == acceptedWorkspaceId else {
             throw AccountEnrollmentError.invalidResponse
         }
-        try keychain.delete(account: configuration.keychainAccount("pending-enrollment-id"))
-        needsAccountEnrollment = false
+        try clearPendingEnrollment()
+        let needsReplica = workspaceId != acceptedWorkspaceId || store == nil
         workspaceId = acceptedWorkspaceId
-        if store == nil {
+        if needsReplica {
             try await installReplica(workspaceId: acceptedWorkspaceId)
         }
+        deviceEnrollmentVerified = true
         syncState = .synced
         message = nil
         startForegroundNetworking()
     }
 }
 
-private enum AccountEnrollmentError: Error { case noEnvironment, invalidResponse }
+private enum AccountEnrollmentError: Error { case invalidResponse }
 
 extension Notification.Name {
     static let clippySyncForegrounded = Notification.Name("clippy-sync-foregrounded")

@@ -11,7 +11,8 @@ pub mod store;
 use cloud::{CloudBatch, CloudClient};
 use config::{Environment, SyncConfig};
 use crypto::{
-    AuthenticatedPrincipal, PairingResponse, PendingPairing, SealedEnvelope, WorkspaceKey,
+    AccountEnrollment, AuthenticatedPrincipal, PairingResponse, PendingPairing, SealedEnvelope,
+    WorkspaceKey,
 };
 use model::SyncPayload;
 use rusqlite::Connection;
@@ -68,14 +69,6 @@ pub fn initialize(app: &AppHandle, db_path: PathBuf, data_dir: PathBuf) {
         let retry_delays = [5_u64, 15, 30, 60, 5 * 60];
         let mut retry = 0;
         loop {
-            if workspace_id(&runtime.db_path, environment, false)
-                .ok()
-                .flatten()
-                .is_none()
-            {
-                eprintln!("clippy sync activation skipped: no local workspace");
-                break;
-            }
             if !auth_login::is_signed_in(environment, &runtime.db_path).await {
                 eprintln!("clippy sync activation skipped: no valid local session");
                 break;
@@ -202,54 +195,101 @@ async fn activate(
     {
         return Ok(active.config.clone());
     }
-    let workspace_id = workspace_id(&runtime.db_path, environment, create_workspace)?
-        .ok_or_else(|| "No sync workspace exists yet".to_string())?;
-    let config = SyncConfig::for_environment(environment, workspace_id.clone())
+    let local_workspace_id = workspace_id(&runtime.db_path, environment, false)?;
+    let provisional_workspace_id = local_workspace_id
+        .clone()
+        .unwrap_or_else(|| Uuid::nil().to_string());
+    let public_config = SyncConfig::for_environment(environment, provisional_workspace_id)
         .map_err(|_| "Sync public configuration is invalid".to_string())?;
     let mut token = auth_login::access_token(environment, &runtime.db_path)?;
     if auth_login::access_token_expires_soon(&token) {
         token = auth_login::refresh_access_token(environment, &runtime.db_path).await?;
     }
     let verifier = auth::WorkOsVerifier::new(
-        config.workos_issuer.to_string(),
-        config.workos_audience.clone(),
+        public_config.workos_issuer.to_string(),
+        public_config.workos_audience.clone(),
     )
     .map_err(|_| "WorkOS configuration is invalid")?;
     let owner = verifier
         .verify(&token)
         .await
         .map_err(|_| "Desktop sign-in expired; sign in again from Clippy Settings")?;
-    let key = match crypto::load_workspace_key(&workspace_id)
-        .map_err(|_| "Could not read the workspace key from Keychain")?
-    {
-        Some(key) => key,
-        None if create_workspace => {
-            let key = WorkspaceKey::random();
-            crypto::store_workspace_key(&workspace_id, &key)
-                .map_err(|_| "Could not store the workspace key in Keychain")?;
-            key
-        }
-        None => return Err("The workspace key is missing; pair this Mac again".into()),
-    };
-    let mut connection =
-        Connection::open(&runtime.db_path).map_err(|_| "Could not open the local sync database")?;
-    let actor =
-        store::ensure_identity(&connection).map_err(|_| "Could not create a device identity")?;
-    store::scan_local(&mut connection, &workspace_id, &actor)
-        .map_err(|_| "Could not scan local notes for sync")?;
-
     let cloud = CloudClient::connect(
-        config.convex_url.as_str(),
+        public_config.convex_url.as_str(),
         environment,
         token,
         &runtime.db_path,
     )
     .await
     .map_err(|_| "Could not connect to Convex")?;
-    cloud
-        .bootstrap(&workspace_id, &actor, "Clippy on this Mac")
+    let mut connection =
+        Connection::open(&runtime.db_path).map_err(|_| "Could not open the local sync database")?;
+    let actor =
+        store::ensure_identity(&connection).map_err(|_| "Could not create a device identity")?;
+    let account_workspace = cloud
+        .account_workspace()
         .await
-        .map_err(|_| "Convex rejected this sync workspace")?;
+        .map_err(|_| "Could not read the account workspace from Convex")?;
+    let (config, key) = if let Some(account_workspace) = account_workspace {
+        join_account_workspace(
+            &runtime.db_path,
+            environment,
+            &account_workspace.workspace_id,
+            &actor,
+            &owner,
+            &cloud,
+        )
+        .await?
+    } else {
+        if !create_workspace {
+            return Err("No sync workspace exists yet".into());
+        }
+        let workspace_id = match local_workspace_id {
+            Some(workspace_id) => workspace_id,
+            None => {
+                let workspace_id = Uuid::new_v4().to_string();
+                save_workspace_id(&runtime.db_path, environment, &workspace_id)?;
+                workspace_id
+            }
+        };
+        let config = SyncConfig::for_environment(environment, workspace_id.clone())
+            .map_err(|_| "Sync public configuration is invalid".to_string())?;
+        let key = match crypto::load_workspace_key(&workspace_id)
+            .map_err(|_| "Could not read the workspace key from Keychain")?
+        {
+            Some(key) => key,
+            None => {
+                let key = WorkspaceKey::random();
+                crypto::store_workspace_key(&workspace_id, &key)
+                    .map_err(|_| "Could not store the workspace key in Keychain")?;
+                key
+            }
+        };
+        match cloud
+            .bootstrap(&workspace_id, &actor, "Clippy on this Mac")
+            .await
+        {
+            Ok(()) => (config, key),
+            Err(_) => {
+                let raced_workspace = cloud
+                    .account_workspace()
+                    .await
+                    .map_err(|_| "Convex rejected this sync workspace")?
+                    .ok_or_else(|| "Convex rejected this sync workspace".to_string())?;
+                join_account_workspace(
+                    &runtime.db_path,
+                    environment,
+                    &raced_workspace.workspace_id,
+                    &actor,
+                    &owner,
+                    &cloud,
+                )
+                .await?
+            }
+        }
+    };
+    store::scan_local(&mut connection, &config.workspace_id, &actor)
+        .map_err(|_| "Could not scan local notes for sync")?;
     save_environment(&runtime.db_path, environment)?;
     let cancelled = Arc::new(AtomicBool::new(false));
     {
@@ -274,6 +314,127 @@ async fn activate(
         cancelled,
     );
     Ok(config)
+}
+
+async fn join_account_workspace(
+    db_path: &PathBuf,
+    environment: Environment,
+    workspace_id: &str,
+    actor: &str,
+    owner: &AuthenticatedPrincipal,
+    cloud: &CloudClient,
+) -> Result<(SyncConfig, WorkspaceKey), String> {
+    if let Ok(configured) = std::env::var("CLIPPY_SYNC_WORKSPACE_ID") {
+        if configured != workspace_id {
+            return Err("CLIPPY_SYNC_WORKSPACE_ID does not match this account".into());
+        }
+    }
+    save_workspace_id(db_path, environment, workspace_id)?;
+    let config = SyncConfig::for_environment(environment, workspace_id.to_string())
+        .map_err(|_| "Sync public configuration is invalid".to_string())?;
+    if let Some(key) = crypto::load_workspace_key(workspace_id)
+        .map_err(|_| "Could not read the workspace key from Keychain")?
+    {
+        let enrolled = cloud
+            .is_device_enrolled(workspace_id, actor)
+            .await
+            .map_err(|_| "Could not verify this Mac with Convex")?;
+        if !enrolled {
+            cloud
+                .bootstrap(workspace_id, actor, "Clippy on this Mac")
+                .await
+                .map_err(|_| "Convex rejected this Mac")?;
+        }
+        return Ok((config, key));
+    }
+
+    let key = enroll_desktop_device(&config, actor, owner, cloud).await?;
+    crypto::store_workspace_key(workspace_id, &key)
+        .map_err(|_| "Could not store the workspace key in Keychain")?;
+    Ok((config, key))
+}
+
+async fn enroll_desktop_device(
+    config: &SyncConfig,
+    actor: &str,
+    owner: &AuthenticatedPrincipal,
+    cloud: &CloudClient,
+) -> Result<WorkspaceKey, String> {
+    let enrollment = AccountEnrollment::new();
+    let enrollment_id = Uuid::new_v4().to_string();
+    let requested = cloud
+        .request_enrollment(
+            &enrollment_id,
+            actor,
+            "Clippy on this Mac",
+            &enrollment.public_key,
+            true,
+        )
+        .await
+        .map_err(|_| "Could not request secure account enrollment")?;
+    if requested.state == "noWorkspace" {
+        return Err("No account workspace exists yet".into());
+    }
+    if requested.workspace_id.as_deref() != Some(config.workspace_id.as_str()) {
+        return Err("Convex returned the wrong account workspace".into());
+    }
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10 * 60 + 15);
+    let mut delay = 1_u64;
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Err("No signed-in Clippy device approved this Mac in time".into());
+        }
+        let status = cloud
+            .enrollment_status(&enrollment_id, actor)
+            .await
+            .map_err(|_| "Could not read secure account enrollment")?;
+        if let Some(status) = status {
+            if status.state == "expired" {
+                return Err("Secure account enrollment expired".into());
+            }
+            if status.state == "granted" {
+                let offer = status
+                    .offer
+                    .ok_or_else(|| "Enrollment grant is incomplete".to_string())?;
+                let grant = status
+                    .grant
+                    .ok_or_else(|| "Enrollment grant is incomplete".to_string())?;
+                if status.workspace_id.as_deref() != Some(config.workspace_id.as_str())
+                    || offer.workspace_id != config.workspace_id
+                    || offer.sync_url.trim_end_matches('/')
+                        != config.convex_url.as_str().trim_end_matches('/')
+                    || offer.workos_issuer.trim_end_matches('/')
+                        != config.workos_issuer.as_str().trim_end_matches('/')
+                    || offer.workos_audience != config.workos_audience
+                    || offer.expires_at_ms < now_ms()
+                {
+                    return Err("Enrollment grant does not match this account".into());
+                }
+                let key = enrollment
+                    .unwrap(&offer, &grant, owner)
+                    .map_err(|_| "Could not decrypt the workspace key")?;
+                let accepted = cloud
+                    .accept_enrollment(&enrollment_id, actor)
+                    .await
+                    .map_err(|_| "Could not accept secure account enrollment")?;
+                if accepted.workspace_id != config.workspace_id {
+                    return Err("Convex accepted the wrong account workspace".into());
+                }
+                return Ok(key);
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(delay)).await;
+        delay = (delay * 2).min(15);
+    }
+}
+
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -722,6 +883,20 @@ fn workspace_id(
     crate::db::set_setting(&connection, &setting, &value)
         .map_err(|_| "Could not save the workspace identity")?;
     Ok(Some(value))
+}
+
+fn save_workspace_id(
+    db_path: &PathBuf,
+    environment: Environment,
+    workspace_id: &str,
+) -> Result<(), String> {
+    if Uuid::parse_str(workspace_id).is_err() {
+        return Err("Convex returned an invalid workspace identity".into());
+    }
+    let connection = Connection::open(db_path).map_err(|_| "Could not open settings")?;
+    let setting = format!("sync_workspace_id:{}", environment.as_str());
+    crate::db::set_setting(&connection, &setting, workspace_id)
+        .map_err(|_| "Could not save the workspace identity".to_string())
 }
 
 fn save_environment(db_path: &PathBuf, environment: Environment) -> Result<(), String> {

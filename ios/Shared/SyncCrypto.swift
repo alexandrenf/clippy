@@ -40,6 +40,12 @@ public struct AuthenticatedPrincipal: Equatable, Sendable {
 public struct WorkspaceKey: Equatable, Sendable {
     public let data: Data
 
+    public static func random() -> Self {
+        var generator = SystemRandomNumberGenerator()
+        let bytes = (0..<32).map { _ in UInt8.random(in: .min ... .max, using: &generator) }
+        return try! Self(data: Data(bytes))
+    }
+
     public init(data: Data) throws {
         guard data.count == 32 else { throw SyncCryptoError.invalidKey }
         self.data = data
@@ -60,8 +66,8 @@ public struct SealedEnvelope: Codable, Equatable, Sendable {
 
 public enum SyncCrypto {
     /// Device-side enrollment for an already authenticated account. The private
-    /// key never leaves this device; the Mac wraps the workspace key to its
-    /// public counterpart after verifying the same WorkOS account through Convex.
+    /// key never leaves this device; any enrolled peer can wrap the workspace
+    /// key to its public counterpart after Convex verifies the same account.
     public struct AccountEnrollment: Sendable {
         public let request: AccountEnrollmentRequest
         private let privateKey: Curve25519.KeyAgreement.PrivateKey
@@ -86,6 +92,67 @@ public enum SyncCrypto {
                 principal: principal
             )
         }
+    }
+
+    /// Creates a one-use workspace-key grant for another device on the same
+    /// authenticated account. Wire field names retain their v1 Mac/phone names
+    /// for compatibility, but neither side has a privileged platform role.
+    public static func grantAccountEnrollment(
+        request: AccountEnrollmentRequest,
+        workspaceId: String,
+        syncURL: String,
+        workOSIssuer: String,
+        workOSAudience: String,
+        workspaceKey: WorkspaceKey,
+        principal: AuthenticatedPrincipal,
+        expiresAtMs: UInt64
+    ) throws -> AccountEnrollmentResponse {
+        let grantorKey = Curve25519.KeyAgreement.PrivateKey()
+        let grantorPublicKey = grantorKey.publicKey.rawRepresentation.base64URLEncodedString()
+        var generator = SystemRandomNumberGenerator()
+        let token = Data((0..<32).map {
+            _ in UInt8.random(in: .min ... .max, using: &generator)
+        }).base64URLEncodedString()
+        let offer = PairingOffer(
+            version: 1,
+            workspaceId: workspaceId,
+            syncUrl: syncURL,
+            workosIssuer: workOSIssuer,
+            workosAudience: workOSAudience,
+            macPublicKey: grantorPublicKey,
+            oneTimeToken: token,
+            expiresAtMs: expiresAtMs
+        )
+        let requesterKey = try Curve25519.KeyAgreement.PublicKey(
+            rawRepresentation: Data(base64URLEncoded: request.phonePublicKey)
+        )
+        let shared = try grantorKey.sharedSecretFromKeyAgreement(with: requesterKey)
+        let wrapKey = shared.hkdfDerivedSymmetricKey(
+            using: SHA256.self,
+            salt: Data(token.utf8),
+            sharedInfo: Data("clippy-sync-pairing-wrap-key-v1:\(workspaceId)".utf8),
+            outputByteCount: 32
+        )
+        let payload = PairingGrantPayload(
+            workspaceId: workspaceId,
+            workspaceKey: workspaceKey.base64URL,
+            authorizedSubject: principal.subject,
+            organizationId: principal.organizationId
+        )
+        let grant = PairingGrant(
+            macPublicKey: grantorPublicKey,
+            phonePublicKey: request.phonePublicKey,
+            sealedWorkspace: try seal(
+                plaintext: JSONEncoder().encode(payload),
+                key: wrapKey,
+                aad: pairingAAD(
+                    offer: offer,
+                    phonePublicKey: request.phonePublicKey,
+                    principal: principal
+                )
+            )
+        )
+        return AccountEnrollmentResponse(offer: offer, grant: grant)
     }
 
     public static func seal(_ plaintext: Data, key: WorkspaceKey, aad: Data) throws -> SealedEnvelope {

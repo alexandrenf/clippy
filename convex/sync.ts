@@ -152,8 +152,9 @@ export const deviceRegistration = query({
   },
 });
 
-// Desktop subscribes to this narrow coordination query. Enrollment requests
-// must wake the Mac immediately even though they do not change device counters.
+// Every enrolled client subscribes to this narrow coordination query.
+// Enrollment requests must wake a peer immediately even though they do not
+// change device counters.
 export const coordinationSignals = query({
   args: { workspaceId: v.string(), actorId: v.string() },
   handler: async (ctx, args) => {
@@ -290,6 +291,8 @@ export const requestEnrollment = mutation({
     actorId: v.string(),
     deviceName: v.string(),
     phonePublicKey: v.string(),
+    platform: v.optional(v.string()),
+    recoverKey: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const identity = await requireIdentity(ctx);
@@ -297,6 +300,8 @@ export const requestEnrollment = mutation({
     requireUuid(args.actorId, "actorId");
     requireSafeText(args.deviceName, "deviceName", 160);
     requireSafeText(args.phonePublicKey, "phonePublicKey", 128);
+    const platform = args.platform ?? "ios";
+    requireSafeText(platform, "platform", 32);
     const workspace = await ctx.db
       .query("workspaces")
       .withIndex("by_owner", (q) => q.eq("ownerId", identity.tokenIdentifier))
@@ -308,7 +313,9 @@ export const requestEnrollment = mutation({
         q.eq("workspaceId", workspace.workspaceId).eq("actorId", args.actorId),
       )
       .unique();
-    if (existingDevice) return { state: "alreadyEnrolled" as const, workspaceId: workspace.workspaceId };
+    if (existingDevice && !args.recoverKey) {
+      return { state: "alreadyEnrolled" as const, workspaceId: workspace.workspaceId };
+    }
     const existing = await ctx.db
       .query("enrollments")
       .withIndex("by_enrollment", (q) => q.eq("enrollmentId", args.enrollmentId))
@@ -326,6 +333,7 @@ export const requestEnrollment = mutation({
       actorId: args.actorId,
       deviceName: args.deviceName,
       phonePublicKey: args.phonePublicKey,
+      platform,
       status: "pending",
       expiresAt: Date.now() + ENROLLMENT_TTL_MS,
       createdAt: Date.now(),
@@ -376,10 +384,13 @@ export const grantEnrollment = mutation({
       .withIndex("by_enrollment", (q) => q.eq("enrollmentId", args.enrollmentId))
       .unique();
     if (!enrollment || enrollment.ownerId !== identity.tokenIdentifier ||
-        enrollment.workspaceId !== args.workspaceId || enrollment.status !== "pending" ||
-        enrollment.expiresAt < Date.now()) {
+        enrollment.workspaceId !== args.workspaceId) {
       throw new ConvexError("Enrollment is unavailable");
     }
+    if (enrollment.status === "granted" || enrollment.status === "accepted") {
+      return { granted: false };
+    }
+    if (enrollment.expiresAt < Date.now()) throw new ConvexError("Enrollment is unavailable");
     if (args.offer.workspaceId !== args.workspaceId || args.offer.expiresAtMs < Date.now() ||
         args.grant.phonePublicKey !== enrollment.phonePublicKey ||
         args.grant.macPublicKey !== args.offer.macPublicKey) {
@@ -460,13 +471,18 @@ export const acceptEnrollment = mutation({
         ownerId: identity.tokenIdentifier,
         actorId: args.actorId,
         name: enrollment.deviceName,
-        platform: "ios",
+        platform: enrollment.platform ?? "ios",
         latestCounter: 0,
         lastSeenAt: Date.now(),
       });
       device = await ctx.db.get(id);
     }
     await ctx.db.patch(enrollment._id, { status: "accepted" });
+    await ctx.db.patch(device!._id, {
+      name: enrollment.deviceName,
+      platform: enrollment.platform ?? device!.platform,
+      lastSeenAt: Date.now(),
+    });
     return { workspaceId: enrollment.workspaceId, actorId: device!.actorId };
   },
 });

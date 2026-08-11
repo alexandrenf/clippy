@@ -58,6 +58,43 @@ import Testing
     #expect(hidden.nextDelay(jitterUnit: 0.5, hasLocalOperations: true) == 0)
 }
 
+@Test func accountWorkspaceRoutingRecoversStaleDeviceState() {
+    #expect(AccountWorkspaceRoutingDecision.resolve(
+        localWorkspaceId: nil,
+        accountWorkspaceId: "workspace-new"
+    ) == .enroll)
+    #expect(AccountWorkspaceRoutingDecision.resolve(
+        localWorkspaceId: "workspace-current",
+        accountWorkspaceId: "workspace-current"
+    ) == .keepLocalWorkspace)
+    #expect(AccountWorkspaceRoutingDecision.resolve(
+        localWorkspaceId: "workspace-legacy",
+        accountWorkspaceId: "workspace-current"
+    ) == .resetAndEnroll)
+    #expect(AccountWorkspaceRoutingDecision.resolve(
+        localWorkspaceId: "workspace-legacy",
+        accountWorkspaceId: nil
+    ) == .resetAndEnroll)
+}
+
+@Test func anyEnrolledDeviceCanGrantTheWorkspaceKey() throws {
+    let principal = AuthenticatedPrincipal(subject: "user-123", organizationId: "org-123")
+    let workspaceKey = try WorkspaceKey(data: Data(repeating: 42, count: 32))
+    let requester = SyncCrypto.AccountEnrollment()
+    let response = try SyncCrypto.grantAccountEnrollment(
+        request: requester.request,
+        workspaceId: "11111111-1111-4111-8111-111111111111",
+        syncURL: "https://example.convex.cloud",
+        workOSIssuer: "https://example.authkit.app",
+        workOSAudience: "clippy-api",
+        workspaceKey: workspaceKey,
+        principal: principal,
+        expiresAtMs: 2_000_000_000_000
+    )
+
+    #expect(try requester.unwrap(response: response, principal: principal) == workspaceKey)
+}
+
 @Test func sealedPayloadAuthenticatesItsContext() throws {
     let key = try WorkspaceKey(data: Data(repeating: 9, count: 32))
     let envelope = try SyncCrypto.seal(Data("private".utf8), key: key, aad: Data("workspace-1".utf8))
@@ -141,6 +178,30 @@ import Testing
     let reopened = try LocalSyncStore(workspaceId: workspace, baseDirectory: macDirectory)
     let durableConflict = await reopened.view().items.first(where: { $0.id == item.id })
     #expect(durableConflict?.content.hasConflict == true)
+}
+
+@Test func eitherDeviceCanCreateAndDeleteWhileTheOtherConverges() async throws {
+    let firstDirectory = temporaryDirectory()
+    let secondDirectory = temporaryDirectory()
+    defer {
+        try? FileManager.default.removeItem(at: firstDirectory)
+        try? FileManager.default.removeItem(at: secondDirectory)
+    }
+    let workspace = "workspace-equal-devices"
+    let first = try LocalSyncStore(workspaceId: workspace, baseDirectory: firstDirectory)
+    let second = try LocalSyncStore(workspaceId: workspace, baseDirectory: secondDirectory)
+
+    let section = try await first.createSection(name: "Shared")
+    let original = try await first.createItem(sectionId: section.id, content: "From first")
+    _ = try await second.applyRemotePayload(try await first.outboundPayload())
+
+    try await second.deleteItem(id: original.id)
+    let replacement = try await second.createItem(sectionId: section.id, content: "From second")
+    _ = try await first.applyRemotePayload(try await second.outboundPayload())
+
+    let firstView = await first.view()
+    #expect(!firstView.items.contains(where: { $0.id == original.id }))
+    #expect(firstView.items.first(where: { $0.id == replacement.id })?.projectedContent == "From second")
 }
 
 @Test func metadataLwwConvergesWhenOperationsArriveOutOfOrder() async throws {

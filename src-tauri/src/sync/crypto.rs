@@ -47,6 +47,40 @@ pub struct PairingGrant {
     pub sealed_workspace: SealedEnvelope,
 }
 
+/// Enrollment requester used by any device joining an existing account
+/// workspace. The private key remains in memory until a peer publishes the
+/// one-use encrypted workspace-key grant through Convex.
+pub struct AccountEnrollment {
+    secret: StaticSecret,
+    pub public_key: String,
+}
+
+impl AccountEnrollment {
+    pub fn new() -> Self {
+        let secret = StaticSecret::random_from_rng(OsRng);
+        let public_key = URL_SAFE_NO_PAD.encode(PublicKey::from(&secret).as_bytes());
+        Self { secret, public_key }
+    }
+
+    pub fn unwrap(
+        &self,
+        offer: &PairingOffer,
+        grant: &PairingGrant,
+        principal: &AuthenticatedPrincipal,
+    ) -> Result<WorkspaceKey, CryptoError> {
+        if grant.phone_public_key != self.public_key {
+            return Err(CryptoError::AuthenticationFailed);
+        }
+        unwrap_pairing_grant(&self.secret, offer, grant, principal)
+    }
+}
+
+impl Default for AccountEnrollment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct PendingPairing {
     pub offer: PairingOffer,
     secret: StaticSecret,
@@ -451,6 +485,33 @@ mod tests {
         let phone_two = pair_phone(workspace_key.clone(), &principal);
         assert_eq!(phone_one.as_bytes(), workspace_key.as_bytes());
         assert_eq!(phone_two.as_bytes(), workspace_key.as_bytes());
+    }
+
+    #[test]
+    fn any_device_can_request_and_unwrap_an_enrollment_grant() {
+        let workspace_key = WorkspaceKey::from_bytes([24; 32]);
+        let principal = AuthenticatedPrincipal {
+            subject: "user_123".into(),
+            organization_id: Some("org_123".into()),
+        };
+        let requester = AccountEnrollment::new();
+        let pairing = PendingPairing::new(
+            "workspace".into(),
+            "https://sync.example.com".into(),
+            "https://issuer.example.com".into(),
+            "client_test".into(),
+            workspace_key.clone(),
+            principal.clone(),
+            60_000,
+        );
+        let offer = pairing.offer.clone();
+        let response = PairingResponse {
+            phone_public_key: requester.public_key.clone(),
+            one_time_token: offer.one_time_token.clone(),
+        };
+        let grant = pairing.complete(&response, &principal).unwrap();
+        let recovered = requester.unwrap(&offer, &grant, &principal).unwrap();
+        assert_eq!(recovered.as_bytes(), workspace_key.as_bytes());
     }
 
     #[test]

@@ -7,9 +7,9 @@ Clippy sync has two hosted pieces and no always-on Clippy server:
 
 The former Cloudflare Tunnel, loopback origin, relay Worker, D1 database, and
 `cloudflared` process are retired. WorkOS remains the login provider. Clippy
-clients keep the existing CRDT and end-to-end encryption, so Convex and
-Cloudflare receive ciphertext and routing metadata rather than note or file
-contents.
+clients keep the existing CRDT and end-to-end encryption. Convex is the
+authoritative encrypted operation log for the account, while Cloudflare stores
+encrypted attachment chunks; neither service receives note or file plaintext.
 
 ## Data flow
 
@@ -20,13 +20,12 @@ operations with a monotonically increasing actor counter.
 2. It groups up to 256 consecutive operations into a payload no larger than
    550 KB, encrypts it with ChaCha20-Poly1305, and writes one `operationBatches`
    document to Convex.
-3. Each device row stores only its latest accepted counter. The iOS app
-   subscribes to that small `sync:changes` query, so note payloads are not read
-   merely to detect a change. Desktop subscribes to a companion Convex
-   coordination query that includes the same counters plus a pending-enrollment
-   signal, so both edits and new-device requests wake it immediately. A
-   30-second visible or five-minute hidden check remains only as a reconnect
-   safety net.
+3. Each device row stores only its latest accepted counter. Every enrolled
+   device subscribes to the small Convex coordination query containing those
+   counters plus a pending-enrollment signal. Note payloads are not read merely
+   to detect a change, and both edits and new-device requests wake an available
+   peer immediately. A 30-second visible or five-minute hidden check remains
+   only as a reconnect safety net.
 4. A pull reads at most 12 missing encrypted batches. Clients authenticate the
    workspace, actor, and counter range as AEAD associated data before applying
    the operations idempotently.
@@ -69,13 +68,19 @@ Every query, mutation, and action checks the authenticated WorkOS token
 identifier. One WorkOS account owns one workspace per deployment; staging and
 production remain isolated.
 
-The first signed-in Mac creates the workspace UUID and a random 256-bit
-workspace key. The key remains in macOS Keychain. A signed-in iPhone without a
-key publishes a ten-minute enrollment request containing an ephemeral X25519
-public key. The Mac publishes a one-use X25519/HKDF-wrapped grant, and the phone
-stores the recovered workspace key in its ThisDeviceOnly Keychain before
-accepting device membership. Convex sees the public keys and encrypted grant,
-not the workspace key.
+The first signed-in device creates the workspace UUID and a random 256-bit
+workspace key. Each platform stores the key in its device-only Keychain. A
+signed-in device without the key publishes a ten-minute enrollment request
+containing an ephemeral X25519 public key. Any already-enrolled Mac or iPhone
+can publish a one-use X25519/HKDF-wrapped grant, and the joining device stores
+the recovered key before accepting membership. Convex verifies the shared
+WorkOS account and carries the public keys and encrypted grant, but never sees
+the workspace key. No device is the sync authority: every enrolled device can
+create, update, delete, grant peers, and converge through Convex independently.
+
+If every enrolled device loses its device-only workspace key, the ciphertext in
+Convex cannot be decrypted. A separate user-controlled recovery-key design is
+required before offering key recovery without an existing enrolled device.
 
 ## Login persistence
 
